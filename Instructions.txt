@@ -1,0 +1,173 @@
+Help me building my wearable ML and MLOps portfolio projerct as an expert ML engineer in digital health / wearable sensing.
+Help me bootstrap a portfolio-grade repository that demonstrates: (1) time-series modeling on real multi-sensor wearable data, (2) uncertainty + signal quality, and (3) MLOps-quality engineering (reproducibility, tracking, tests, packaging, and a minimal deployment endpoint).
+
+Context
+- I’m building a flagship portfolio project to increase employability for Swiss biomedical ML / data science roles (medtech, wearables, pharma digital biomarkers).
+- The project must be credible and “engineering-first”: clean pipeline, leakage-safe evaluation, calibration, monitoring, minimal deploy.
+- Dataset should be publicly accessible. Prefer WESAD because it’s multi-sensor (EDA, ECG, ACC, respiration, temperature), realistic, and widely recognized in affective computing / digital biomarkers.
+
+High-level project title
+"Wearable Signal Quality + Uncertainty + Deployment: Stress Detection on WESAD under Realistic Domain Shift"
+
+Core motivation (for README narrative)
+- Wearable signals are noisy, subject-dependent, and affected by motion/artifacts.
+- In real medical/digital biomarker settings, we must output not only a prediction but also a confidence measure, and we must detect low-quality segments and abstain when needed.
+- Many toy projects do “stress classification” with random splits and no calibration. This project focuses on realistic generalization, reliability, and MLOps.
+
+What I need you to produce in code
+1) Repository bootstrap
+- Create a clean repo structure with src/ layout, tests/, configs/, reports/, scripts/.
+- Use python packaging (pyproject.toml) and a pinned environment (requirements.txt or environment.yml).
+- Include pre-commit config (ruff for lint + format).
+- Provide a Makefile with common commands: setup, download, preprocess, train, eval, test, lint, docker_build, docker_run.
+
+2) Data ingestion (WESAD)
+- Implement a module to download or prepare WESAD data:
+  - WESAD is distributed as pickled data per subject (S2..S17) with wrist + chest modalities.
+  - Assume the user may need to manually download due to licensing; implement a "data/raw/" expected structure and a script that validates the folder contents.
+  - Howver for conenience I already downloaded it for you from here (https://uni-siegen.sciebo.de/s/HGdUkoNlW1Ub0Gx/download/WESAD.zip) and you find the zip in the folder (C:\Users\matteucc\Desktop\Portfolio_improvement\Wearable_stress_biomarker).
+- Create deterministic parsing:
+  - extract modalities: EDA, ECG, ACC (3-axis), respiration, temp (as available).
+  - unify sampling rates via resampling to a common frequency (configurable, e.g., 10 Hz or 25 Hz).
+  - window the signals into fixed-length segments (e.g., 30s windows with 50% overlap).
+  - label windows into: baseline vs stress vs amusement (or binary: stress vs non-stress) based on WESAD labels.
+- Save processed dataset as parquet (data/processed/windows.parquet) plus metadata (subject_id, session_id, label, start_time).
+
+3) Signal quality index (SQI) + abstention
+Implement an explicit SQI layer:
+- compute simple, interpretable SQI features per window:
+  - missingness / flatline detection
+  - z-score outliers
+  - motion artifact proxy from ACC magnitude
+  - for EDA: sudden spikes, low tonic variance
+  - for ECG (if used): peak detectability proxy (optional, can start simple)
+- Train a lightweight SQI classifier (good vs bad quality) OR derive a scalar SQI score using rules.
+- Use SQI to:
+  - filter low-quality windows during training (optional, configurable)
+  - at inference, if SQI below threshold, abstain or return "low confidence".
+
+4) Modeling task
+Primary task: stress detection
+- Provide two modeling baselines:
+  A) classical: feature-based model (e.g., extracted stats per window) + Logistic Regression / XGBoost.
+  B) deep: a small 1D CNN or GRU on raw/resampled windows (keep it minimal).
+- The deep model must be modest and fast. Prefer PyTorch.
+- Keep models and preprocessing modular, so that adding new modalities is easy.
+
+[Architectural Decision Record - 2026-01-16]
+Dual-Pipeline Architecture for Chest & Wrist
+During the implementation phase (specifically while building the notebook verification suite), we identified a critical architectural ambiguity: whether to focus on the high-quality Chest data (Gold Standard validation) or the noisy Wrist data (Real-world application).
+We decided to implement BOTH via a configurable switch:
+- Strategy: Implement a `sensor_location` toggle in `configs/default.yaml`.
+- Justification: This maximizes portfolio value. Chest data proves the modeling "upper bound" (scientific rigor), while Wrist data demonstrates "robustness to noise" (engineering reality).
+- Implementation: `src/data/make_dataset.py` now handles both schemas (700Hz Chest vs Mixed-Frequency Wrist) and normalizes them to a common target frequency.
+
+5) Realistic split regimes (leakage-safe evaluation)
+Implement at least two split strategies:
+A) random window split (baseline, optimistic)
+B) leave-one-subject-out (LOSO): generalization to unseen subjects (must-have)
+Optional C) leave-session-out or "held-out device location" if you separate wrist vs chest.
+
+Save split indices to disk (splits/*.json) for reproducibility.
+Add unit tests asserting:
+- no overlap of subject_id between train/test for LOSO
+- no temporal leakage if you use overlapping windows: enforce that train/test windows come from different subjects (so overlap is irrelevant), or if same subject split exists ensure non-overlap by time (explain clearly).
+
+6) Reliability: calibration + uncertainty
+Add confidence estimation:
+- For classical model: use calibrated probabilities (Platt scaling or isotonic using a validation set).
+- For deep model: implement MC dropout or temperature scaling (pick one for MVP).
+- Add evaluation of calibration:
+  - ECE (expected calibration error) + reliability diagram.
+- Define a "coverage vs accuracy" curve using abstention:
+  - show that abstaining on low confidence improves accuracy on the remaining samples.
+
+7) Experiment tracking and artifacts (lightweight MLOps)
+- Each run writes a run directory with:
+  - config snapshot (yaml)
+  - metrics.json
+  - confusion matrix and calibration plot
+  - coverage-accuracy curve
+  - model artifact (torch .pt or joblib)
+  - preprocessor + feature extractor artifact
+  - SQI thresholds/artifacts
+- Deterministic seeds everywhere.
+
+Optionally support MLflow, but only if minimal.
+
+8) Minimal deployment layer
+- Add a small FastAPI app:
+  - endpoint /predict_window that accepts:
+    - modality arrays (EDA, ACC, etc.) OR precomputed features
+    - returns: predicted label, probability, confidence, sqi_score, abstain flag
+- Provide a Dockerfile to run the API.
+- Provide example request payloads in README.
+
+9) Monitoring / drift (simple but credible)
+- Implement a "monitoring report" script:
+  - compute feature distribution summary on new data vs training reference (KS test or simple PSI).
+  - log drift metrics.
+- This can run offline as a CLI: python -m src.monitoring.drift_report --input new_windows.parquet
+
+10) Documentation
+Draft README.md with:
+- problem and why it matters in digital health
+- dataset (WESAD) and modalities
+- pipeline overview: preprocessing, windowing, SQI, models, evaluation
+- key results: baseline vs LOSO, calibration, abstention benefit
+- how to reproduce (one command)
+- deployment instructions (FastAPI + Docker)
+- limitations and next steps (more robust SQI, external dataset, subject metadata, etc.)
+
+Constraints / Style
+- Code must be clean, modular, and production-like.
+- Use snake_case everywhere.
+- Comments start lowercase.
+- Prefer type hints.
+- Prefer minimal dependencies.
+- Avoid notebooks as the main pipeline. Notebooks can exist but pipeline should be runnable via CLI scripts.
+- Provide CLI entry points:
+  - python -m src.data.validate_raw
+  - python -m src.data.build_windows
+  - python -m src.features.compute_features
+  - python -m src.models.train --model logistic --split loso
+  - python -m src.models.train --model cnn --split loso
+  - python -m src.models.evaluate
+  - python -m src.monitoring.drift_report
+  - uvicorn src.api.app:app --host 0.0.0.0 --port 8000
+
+Testing
+- Assume no raw WESAD available during CI/tests.
+- Provide small synthetic fixtures to test:
+  - windowing logic
+  - split generation
+  - SQI score function
+  - API schema validation
+
+Deliverables
+- Output a plan of the repo structure + explanation of each file.
+- Then generate the actual code for the initial MVP:
+  - pyproject.toml
+  - Makefile
+  - configs/default.yaml
+  - src/data/validate_raw.py
+  - src/data/build_windows.py
+  - src/features/sqi.py
+  - src/features/feature_extraction.py
+  - src/models/train.py
+  - src/models/evaluate.py
+  - src/mlops/run_logger.py
+  - src/monitoring/drift_report.py
+  - src/api/app.py
+  - tests/test_splits.py
+  - tests/test_windowing.py
+  - tests/test_sqi.py
+  - README.md
+- If any WESAD parsing details are uncertain, implement parsing in a robust way with clear TODOs and explicit assumptions documented in README.
+
+Start now by proposing the exact directory structure and writing the files.
+
+You can also write a todo to keep track of what we should do (the instruction I gave here also in Instructions.txt), and keeping track of where we are.
+Note: Keep raw data organized by subject and condition. Handle missing data and resample to consistent time steps. Normalize only on training data. Segment into 30s windows and label consistently. Maintain a strict subject-wise split to avoid leakage. Extract features like heart rate, EDA, etc. Use baseline models (e.g. logistic regression), then try LSTM or CNN. Track experiments with MLflow. Finally, ensure reproducibility with fixed seeds and test the pipeline for correctness.
+
+

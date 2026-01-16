@@ -1,0 +1,55 @@
+data:
+  raw_path: "data/raw"
+  processed_path: "data/processed"
+  zip_path: "data/WESAD.zip"
+  
+  # Pipeline Configuration
+  sensor_location: "chest"   # Options: "chest", "wrist"
+  
+  # Modalities to process (will be filtered based on availability)
+  modalities: ["EDA", "ACC", "TEMP", "RESP", "BVP"] 
+  
+  sampling_rate: 700  # Base logic rate (labels are 700Hz)
+  target_sampling_rate: 35 # Common frequency for ML input
+  window_size_sec: 60
+  window_overlap_sec: 30
+  labels: 
+    0: "transient"
+    1: "baseline"
+    2: "stress"
+    3: "amusement"
+    4: "meditation"
+  target_labels: [1, 2, 3] # Baseline, Stress, Amusement (Standard WESAD subset)
+  binary_target: False # If True, Stress vs (Baseline + Amusement)
+
+features:
+  sqi:
+    acceptance_threshold: 0.7
+    motion_threshold_g: 0.5
+    flatline_thresholds:
+      EDA: 0.005 
+      TEMP: 0.01 
+      ECG: 0.05 
+      RESP: 0.5
+    valid_ranges:
+      TEMP: [20.0, 45.0]
+      EDA: [0.01, 100.0]
+
+training:
+  seed: 42
+  test_size: 0.2
+  split_type: "loso" # "random" or "loso"
+  models:
+    logistic:
+      C: 1.0
+      max_iter: 1000
+    deep:
+      hidden_dim: 64
+      n_layers: 2
+      dropout: 0.3
+      learning_rate: 0.001
+      epochs: 20
+      batch_size: 64
+
+monitoring:
+  reference_path: "data/processed/reference_stats.json"
