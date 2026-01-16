@@ -40,6 +40,9 @@ data/*.zip
 data/*.zip
 data/docs/*
 
+# Plots
+notebooks/outputs/*
+
 # Models and artifacts
 models/*
 reports/*
