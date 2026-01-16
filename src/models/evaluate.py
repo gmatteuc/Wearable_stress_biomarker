@@ -41,9 +41,10 @@ def compute_ece(y_true, y_prob, n_bins=10):
             
     return ece
 
-def evaluate_model(y_true, y_prob, labels, output_dir: Path):
+def evaluate_model(y_true, y_prob, labels, output_dir: Path, subject_ids=None):
     """
     Generate evaluation report: metrics, confusion matrix, calibration.
+    Returns a dictionary with metrics and granular results DataFrame.
     """
     y_pred = np.argmax(y_prob, axis=1)
     
@@ -60,6 +61,22 @@ def evaluate_model(y_true, y_prob, labels, output_dir: Path):
     
     with open(output_dir / "metrics.json", "w") as f:
         json.dump(metrics, f, indent=4)
+
+    # Save granular results for diagnostics
+    results = {
+        'y_true': y_true,
+        'y_pred': y_pred,
+        'confidence': np.max(y_prob, axis=1)
+    }
+    # Add per-class probabilities
+    for i, label in enumerate(labels):
+        results[f'prob_{label}'] = y_prob[:, i]
+        
+    if subject_ids is not None:
+        results['subject_id'] = subject_ids
+
+    results_df = pd.DataFrame(results)
+    results_df.to_csv(output_dir / "predictions.csv", index=False)
         
     # 2. Confusion Matrix
     cm = confusion_matrix(y_true, y_pred)
@@ -88,4 +105,4 @@ def evaluate_model(y_true, y_prob, labels, output_dir: Path):
     plt.savefig(output_dir / "calibration_plot.png")
     plt.close()
     
-    return metrics
+    return metrics, results_df

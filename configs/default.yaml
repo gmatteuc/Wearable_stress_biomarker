@@ -23,6 +23,8 @@ data:
   binary_target: False # If True, Stress vs (Baseline + Amusement)
 
 features:
+  eda:
+    scr_threshold: 0.015
   sqi:
     acceptance_threshold: 0.7
     motion_threshold_g: 0.5

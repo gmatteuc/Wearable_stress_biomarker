@@ -54,6 +54,9 @@ class Trainer:
             logger.info(f"Loading raw windows from {file_path}")
             df = pd.read_parquet(file_path)
             
+            # MVP Filter: Restrict to Baseline (1) and Stress (2)
+            df = df[df['label'].isin([1, 2])].copy()
+
             # Prepare tensors
             # Stack signal columns
             # Modalities: ['ACC_x', 'ACC_y', 'ACC_z', 'ECG', 'EDA', 'RESP', 'TEMP']
@@ -82,11 +85,21 @@ class Trainer:
             logger.info(f"Loading features from {file_path}")
             df = pd.read_parquet(file_path)
             
-            feature_cols = [c for c in df.columns if c not in ['subject_id', 'label']]
+            # MVP Filter: Restrict to Baseline (1) and Stress (2)
+            # This aligns the training pipeline with the notebook verification
+            df = df[df['label'].isin([1, 2])].copy()
+            
+            # Exclude metadata columns
+            # 'start_idx' and 'session' are metadata, not features. 
+            # 'target' might be created in experimental notebooks.
+            ignore_cols = ['subject_id', 'label', 'session', 'start_idx', 'target']
+            feature_cols = [c for c in df.columns if c not in ignore_cols]
+            
             X = df[feature_cols].values
             y = df['label'].values
             groups = df['subject_id'].values
             
+            logger.info(f"Using {len(feature_cols)} features: {feature_cols}")
             return X, y, groups, feature_cols
 
     def get_split(self, groups):
@@ -107,39 +120,86 @@ class Trainer:
 
     def train_classical(self):
         X, y, groups, feature_names = self.load_data()
-        train_idx, test_idx = self.get_split(groups)
+
+        # Remap labels to 0..K-1 for sklearn compatibility (argmax matches index)
+        unique_labels = sorted(np.unique(y))
+        label_map = {l: i for i, l in enumerate(unique_labels)}
+        y_mapped = np.array([label_map[l] for l in y])
         
-        X_train, X_test = X[train_idx], X[test_idx]
-        y_train, y_test = y[train_idx], y[test_idx]
-        
-        logger.info(f"Train size: {len(X_train)}, Test size: {len(X_test)}")
-        
-        # Pipeline
-        base_clf = LogisticRegression(max_iter=1000, random_state=42)
-        pipe = Pipeline([
-            ('scaler', StandardScaler()),
-            ('clf', base_clf)
-        ])
-        
-        # Calibration (Classical needs it usually if not logistic, but logistic is well calibrated. 
-        # XGBoost definitely needs it. Let's wrap in CalibratedClassifierCV just to demonstrate)
-        # Using 'sigmoid' (Platt) or 'isotonic'.
-        calibrated_clf = CalibratedClassifierCV(pipe, method='sigmoid', cv=3)
-        
-        logger.info("Training classical model...")
-        calibrated_clf.fit(X_train, y_train)
-        
-        # Eval
-        y_prob = calibrated_clf.predict_proba(X_test)
-        
-        # Save
-        joblib.dump(calibrated_clf, self.run_dir / "model.joblib")
-        joblib.dump(feature_names, self.run_dir / "feature_names.joblib")
-        
-        # Mapping labels
+        # Display mappings
         labels = [self.config['data']['labels'][i] for i in sorted(np.unique(y))]
+
+        if self.split_type == 'loso':
+            logger.info("Running full Leave-One-Subject-Out Cross-Validation...")
+            gkf = GroupKFold(n_splits=len(np.unique(groups)))
+            
+            y_test_all = []
+            y_prob_all = []
+            groups_test_all = []
+            
+            for i, (train_idx, test_idx) in enumerate(gkf.split(X, y_mapped, groups)):
+                subj = np.unique(groups[test_idx])
+                logger.info(f"Fold {i+1}: Validating on Subject {subj}")
+                
+                X_train, X_test = X[train_idx], X[test_idx]
+                y_train, y_test = y_mapped[train_idx], y_mapped[test_idx]
+                
+                # Pipeline
+                # Using class_weight='balanced' to handle subject/class imbalance
+                # Matching the notebook's baseline exactly (No extra calibration wrapper)
+                base_clf = LogisticRegression(max_iter=1000, random_state=42, class_weight='balanced', solver='liblinear')
+                pipe = Pipeline([
+                    ('scaler', StandardScaler()),
+                    ('clf', base_clf)
+                ])
+                
+                pipe.fit(X_train, y_train)
+                
+                y_prob = pipe.predict_proba(X_test)
+                
+                y_test_all.append(y_test)
+                y_prob_all.append(y_prob)
+                groups_test_all.append(groups[test_idx])
+                
+            # Aggregate Results
+            y_test_final = np.concatenate(y_test_all)
+            y_prob_final = np.concatenate(y_prob_all)
+            groups_test_final = np.concatenate(groups_test_all)
+            
+            # Train Final Model on ALL data for production artifact
+            logger.info("Training final production model on full dataset...")
+            base_clf = LogisticRegression(max_iter=1000, random_state=42, class_weight='balanced', solver='liblinear')
+            pipe = Pipeline([
+                ('scaler', StandardScaler()),
+                ('clf', base_clf)
+            ])
+            pipe.fit(X, y_mapped)
+            joblib.dump(pipe, self.run_dir / "model.joblib")
+            
+        else:
+            # Single Split (Random)
+            train_idx, test_idx = self.get_split(groups)
+            X_train, X_test = X[train_idx], X[test_idx]
+            y_train, y_test = y_mapped[train_idx], y_mapped[test_idx]
+            groups_train, groups_test = groups[train_idx], groups[test_idx]
+            
+            logger.info(f"Train size: {len(X_train)}, Test size: {len(X_test)}")
+            
+            base_clf = LogisticRegression(max_iter=1000, random_state=42, class_weight='balanced', solver='liblinear')
+            pipe = Pipeline([
+                ('scaler', StandardScaler()),
+                ('clf', base_clf)
+            ])
+            pipe.fit(X_train, y_train)
+            
+            y_test_final = y_test
+            y_prob_final = pipe.predict_proba(X_test)
+            groups_test_final = groups_test
+            
+            joblib.dump(pipe, self.run_dir / "model.joblib")
         
-        evaluate_model(y_test, y_prob, labels, self.run_dir)
+        joblib.dump(feature_names, self.run_dir / "feature_names.joblib")
+        evaluate_model(y_test_final, y_prob_final, labels, self.run_dir, subject_ids=groups_test_final)
         logger.info(f"Results saved to {self.run_dir}")
 
     def train_deep(self):
@@ -151,6 +211,7 @@ class Trainer:
         y_mapped = np.array([label_map[l] for l in y])
         
         train_idx, test_idx = self.get_split(groups)
+        groups_test = groups[test_idx]
         
         # Standardize inputs (Channel-wise)
         # Compute mean/std on Train
@@ -215,7 +276,7 @@ class Trainer:
         
         # Need original labels for display
         display_labels = [self.config['data']['labels'][l] for l in unique_labels]
-        evaluate_model(y_trues, y_probs, display_labels, self.run_dir)
+        evaluate_model(y_trues, y_probs, display_labels, self.run_dir, subject_ids=groups_test)
         logger.info(f"Results saved to {self.run_dir}")
 
     def run(self):

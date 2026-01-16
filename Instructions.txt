@@ -170,4 +170,4 @@ Start now by proposing the exact directory structure and writing the files.
 You can also write a todo to keep track of what we should do (the instruction I gave here also in Instructions.txt), and keeping track of where we are.
 Note: Keep raw data organized by subject and condition. Handle missing data and resample to consistent time steps. Normalize only on training data. Segment into 30s windows and label consistently. Maintain a strict subject-wise split to avoid leakage. Extract features like heart rate, EDA, etc. Use baseline models (e.g. logistic regression), then try LSTM or CNN. Track experiments with MLflow. Finally, ensure reproducibility with fixed seeds and test the pipeline for correctness.
 
-
+Also: keep track of what we do updtaing DEV_LOG.md

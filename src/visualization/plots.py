@@ -19,10 +19,49 @@ from cycler import cycler
 from matplotlib.colors import LinearSegmentedColormap
 import numpy as np
 import itertools
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Any
 import logging
+import pandas as pd
+from pathlib import Path
+from matplotlib.gridspec import GridSpec
+import scipy.signal as signal
+import scipy.stats as stats
+from sklearn.metrics import roc_curve, auc, confusion_matrix, accuracy_score
 
 logger = logging.getLogger(__name__)
+
+def _save_plot(fig, title: str, save_folder: str = None):
+    """
+    Internal helper to save figures to notebooks/outputs/{save_folder}.
+    """
+    if not save_folder:
+        return
+        
+    try:
+        # Determine base directory
+        cwd = Path.cwd()
+        if cwd.name == 'notebooks':
+            base_dir = cwd / 'outputs'
+        elif (cwd / 'notebooks').exists():
+            base_dir = cwd / 'notebooks' / 'outputs'
+        else:
+             base_dir = cwd / 'outputs'
+
+        target_dir = base_dir / save_folder
+        target_dir.mkdir(parents=True, exist_ok=True)
+        
+        # Sanitize title
+        safe_title = "".join([c if c.isalnum() or c in (' ', '_', '-') else '' for c in title]).strip()
+        safe_title = safe_title.replace(' ', '_')
+        if not safe_title:
+             safe_title = "untitled_plot"
+             
+        filepath = target_dir / f"{safe_title}.png"
+        fig.savefig(filepath, dpi=300, bbox_inches='tight')
+        logger.info(f"Saved plot to {str(filepath)}")
+        
+    except Exception as e:
+        logger.warning(f"Failed to save plot '{title}': {str(e)}")
 
 def set_plot_style():
     """
@@ -60,10 +99,93 @@ def set_plot_style():
     
     return selected_colors
 
+def plot_confidence_abstention_panel(results_df, confidence_threshold=0.7, title_prefix="", save_folder: str = None):
+    """
+    Plots a 2x2 panel:
+    (1) High-confidence confusion matrix
+    (2) Probability distribution with abstention zone
+    (3) Calibration plot (reliability diagram)
+    (4) Abstention distribution across subjects
+    """
+    set_plot_style()
+    import matplotlib.pyplot as plt
+    import numpy as np
+    import seaborn as sns
+    from matplotlib.colors import LinearSegmentedColormap
+    from sklearn.metrics import confusion_matrix
+    from sklearn.calibration import calibration_curve
+    from collections import Counter
+
+    DEEP_PURPLE = "#4B0082"
+    DARK_ORANGE = "#FF8C00"
+    cmap_purple = LinearSegmentedColormap.from_list("custom_purple", ["#fafafa", DEEP_PURPLE])
+
+    # Calculate confidence
+    results_df = results_df.copy()
+    results_df['confidence'] = results_df['prob'].apply(lambda x: max(x, 1-x))
+    mask_confident = results_df['confidence'] >= confidence_threshold
+    df_clean = results_df[mask_confident]
+    df_abstained = results_df[~mask_confident]
+    n_total = len(results_df)
+    n_kept = len(df_clean)
+    n_abs = n_total - n_kept
+
+    fig, axes = plt.subplots(2, 2, figsize=(16, 12))
+
+    # (1) High-confidence Confusion Matrix
+    cm_clean = confusion_matrix(df_clean['true'], df_clean['pred'])
+    acc_clean = (df_clean['true'] == df_clean['pred']).mean()
+    sns.heatmap(cm_clean, annot=True, fmt='d', cmap=cmap_purple, ax=axes[0,0], annot_kws={"size": 14, "weight": "bold"})
+    axes[0,0].set_title(f'{title_prefix}High Confidence CM - Acc: {acc_clean:.1%}\n(Removed {n_abs} uncertain samples)')
+    axes[0,0].set_xlabel('Predicted')
+    axes[0,0].set_ylabel('True')
+
+    # (2) Probability Distribution with Abstention Zone
+
+    sns.histplot(results_df['prob'], bins=20, kde=True, ax=axes[0,1], color=DEEP_PURPLE, alpha=0.6)
+    # Make abstention zone more orange and less transparent
+    axes[0,1].axvspan(1-confidence_threshold, confidence_threshold, color=DARK_ORANGE, alpha=0.35, label='Abstention Zone')
+    axes[0,1].axvline(0.5, color='gray', linestyle='--')
+    axes[0,1].set_title(f'{title_prefix}Prediction Probability Distribution')
+    axes[0,1].set_xlabel('prob')
+    axes[0,1].set_ylabel('Count')
+    axes[0,1].legend()
+
+    # (3) Calibration Plot (Reliability Diagram)
+    prob_true, prob_pred = calibration_curve(results_df['true'], results_df['prob'], n_bins=10)
+    # Calculate SE for each bin (binomial SE)
+    bin_counts = np.histogram(results_df['prob'], bins=np.linspace(0,1,11))[0]
+    se = np.sqrt(prob_true * (1 - prob_true) / np.maximum(bin_counts, 1))
+    axes[1,0].plot([0, 1], [0, 1], linestyle='--', color='gray', label='Perfectly Calibrated')
+    axes[1,0].errorbar(prob_pred, prob_true, xerr=None, yerr=se, fmt='o', color=DEEP_PURPLE, label='Model Compliance', capsize=5, elinewidth=2)
+    axes[1,0].set_xlabel("Mean Predicted Confidence")
+    axes[1,0].set_ylabel("Fraction of Positives")
+    axes[1,0].set_title(f'{title_prefix}Calibration Plot (Reliability Diagram)')
+    axes[1,0].legend()
+
+    # (4) Abstention Distribution Across Subjects
+    abstention_counts = df_abstained['subject_id'].value_counts().sort_index()
+    total_counts = results_df['subject_id'].value_counts().sort_index()
+    abstention_frac = (abstention_counts / total_counts).fillna(0)
+    subjects = abstention_frac.index.tolist()
+    axes[1,1].bar(subjects, abstention_frac.values, color=DARK_ORANGE, alpha=0.8)
+    axes[1,1].set_ylim(0, 1)
+    axes[1,1].set_ylabel('Fraction Abstained')
+    axes[1,1].set_xlabel('Subject')
+    axes[1,1].set_title(f'{title_prefix}Abstention Fraction by Subject')
+    for i, v in enumerate(abstention_frac.values):
+        axes[1,1].text(i, v + 0.02, f"{v:.0%}", ha='center', fontsize=10)
+
+    plt.tight_layout()
+    _save_plot(fig, title_prefix + "Confidence_Abstention", save_folder)
+    return fig
+
+
 def plot_raw_signals(
     time_axis: np.ndarray, 
     signals: Dict[str, np.ndarray], 
-    title: str = "Raw Sensor Signals"
+    title: str = "Raw Sensor Signals",
+    save_folder: str = None
 ):
     """
     Generates a multi-row subplot for synchronized physiological signals.
@@ -72,6 +194,7 @@ def plot_raw_signals(
         time_axis: Common time axis in seconds.
         signals: Dictionary mapping modality name (str) to signal array (np.ndarray).
         title: Overall figure title.
+        save_folder: Output folder to auto-save figure (e.g. 'CHEST').
     """
     set_plot_style()
     n_sig = len(signals)
@@ -96,9 +219,10 @@ def plot_raw_signals(
     axes[-1].set_xlabel("Time (s)")
     plt.suptitle(title, y=1.02, fontsize=16)
     plt.tight_layout()
+    _save_plot(fig, title, save_folder)
     return fig
 
-def plot_rel_diagram(y_true, y_prob, title="Reliability Diagram"):
+def plot_rel_diagram(y_true, y_prob, title="Reliability Diagram", save_folder: str = None):
     """
     Plots a calibration curve with confidence histograms.
     """
@@ -120,63 +244,7 @@ def plot_rel_diagram(y_true, y_prob, title="Reliability Diagram"):
     ax.set_title(title)
     ax.legend()
     
-    return fig
-
-def plot_resampling_comparison(
-    raw_t: np.array, 
-    raw_signal: np.array, 
-    res_t: np.array, 
-    res_signal: np.array,
-    raw_fs: int,
-    target_fs: int,
-    title: str = "Resampling Check: Signal Fidelity"
-) -> plt.Figure:
-    """
-    Plots an overlay of the original high-frequency signal and the resampled/windowed version
-    to demonstrate signal fidelity.
-
-    Args:
-        raw_t: Time axis for raw signal.
-        raw_signal: Amplitude of raw signal.
-        res_t: Time axis for resampled signal.
-        res_signal: Amplitude of resampled signal.
-        raw_fs: Sampling rate of raw signal (Hz).
-        target_fs: Sampling rate of resampled signal (Hz).
-        title: Plot title.
-    
-    Returns:
-        plt.Figure: The generated figure.
-    """
-    fig = plt.figure(figsize=(12, 6))
-    
-    # Plot Raw as a thicker, semi-transparent line (Primary Theme Color)
-    plt.plot(
-        raw_t, 
-        raw_signal, 
-        label=f'Raw Original ({raw_fs} Hz)', 
-        alpha=0.6, 
-        linewidth=3, 
-        color='#4B0082'
-    )
-    
-    # Plot Resampled as a dashed contrast line on top (Contrast Theme Color)
-    plt.plot(
-        res_t, 
-        res_signal, 
-        label=f'Resampled Window ({target_fs} Hz)', 
-        linewidth=2, 
-        linestyle='--', 
-        color='#FF8C00', 
-        marker='o', 
-        markersize=4
-    )
-    
-    plt.title(title)
-    plt.xlabel("Time (s)")
-    plt.ylabel("Amplitude")
-    plt.legend()
-    plt.tight_layout()
-    
+    _save_plot(fig, title, save_folder)
     return fig
 
 def plot_resampling_verification_grid(
@@ -185,7 +253,8 @@ def plot_resampling_verification_grid(
     start_time: float,
     raw_fs: int = 700,
     target_fs: int = 35,
-    plot_duration: int = 30
+    plot_duration: int = 30,
+    save_folder: str = None
 ):
     """
     Generates a grid of overlay plots to verify resampling fidelity for ALL modalities.
@@ -253,11 +322,13 @@ def plot_resampling_verification_grid(
         ax.grid(True, alpha=0.3)
         
     axes[-1].set_xlabel("Time (s)")
-    plt.suptitle(f"Pipeline Verification: Signal Fidelity (Aligned at t={start_time:.1f}s)", y=1.02, fontsize=16)
+    title = f"Pipeline Verification: Signal Fidelity (Aligned at t={start_time:.1f}s)"
+    plt.suptitle(title, y=1.02, fontsize=16)
     plt.tight_layout()
+    _save_plot(fig, title, save_folder)
     return fig
 
-def plot_sqi_comparison(scenarios: List[tuple], signal_key: str = 'EDA', thresholds: Dict[str, float] = None) -> plt.Figure:
+def plot_sqi_comparison(scenarios: List[tuple], signal_key: str = 'EDA', thresholds: Dict[str, float] = None, save_folder: str = None) -> plt.Figure:
     """
     Plots a comparison of signal quality scenarios (Good, Flatline, Motion).
     
@@ -383,5 +454,888 @@ def plot_sqi_comparison(scenarios: List[tuple], signal_key: str = 'EDA', thresho
             else:
                  ax_acc.set_title(f"{title} - Motion")
 
-    plt.suptitle(f"Signal Quality Diagnostics: {signal_key} vs Motion", fontsize=16, y=1.05)
+    title = f"Signal Quality Diagnostics: {signal_key} vs Motion"
+    plt.suptitle(title, fontsize=16, y=1.05)
+    _save_plot(fig, title, save_folder)
+    return fig
+
+def plot_eda_decomposition(
+    time_axis: np.ndarray,
+    raw: np.ndarray,
+    tonic: np.ndarray,
+    phasic: np.ndarray,
+    peaks: np.ndarray,
+    threshold: float = 0.01,
+    motion_signal: Optional[np.ndarray] = None,
+    save_folder: str = None
+):
+    """
+    Visualizes EDA decomposition into Tonic and Phasic components.
+    
+    Args:
+        time_axis: Time vector in seconds.
+        raw: Raw EDA signal.
+        tonic: Extracted Tonic component.
+        phasic: Extracted Phasic component.
+        peaks: Indices of detected SCR peaks.
+        threshold: Phasic threshold used for detection.
+        motion_signal: Optional accelerometer signal for context.
+    """
+    set_plot_style()
+    colors = sns.color_palette()
+    primary = colors[0] # #4B0082
+    contrast = colors[1] # #FF8C00
+    
+    n_plots = 3 if motion_signal is not None else 2
+    fig, axes = plt.subplots(n_plots, 1, figsize=(12, 3.5 * n_plots), sharex=True)
+    
+    # 1. Raw vs Tonic
+    ax = axes[0]
+    ax.plot(time_axis, raw, color=primary, label='Raw EDA')
+    ax.plot(time_axis, tonic, color=contrast, linestyle='--', linewidth=2, label='Tonic (Low-pass)')
+    ax.set_title("EDA Decomposition: Raw vs Tonic")
+    ax.legend(loc='upper right')
+    ax.set_ylabel("uS")
+    ax.grid(True)
+    
+    # 2. Phasic & Peaks
+    ax = axes[1]
+    ax.plot(time_axis, phasic, color=primary, label='Phasic (Residual)')
+    
+    # Updated Peak Visualization: Transparent with outline using plt.scatter
+    if len(peaks) > 0:
+        ax.scatter(
+            time_axis[peaks], 
+            phasic[peaks], 
+            color=contrast, 
+            s=80, 
+            alpha=0.6, 
+            edgecolor='white', 
+            linewidth=1.5, 
+            zorder=3,
+            label=f'Detected SCRs (n={len(peaks)})'
+        )
+    
+    ax.axhline(threshold, color='gray', linestyle=':', alpha=0.5, label=f'Threshold ({threshold} uS)')
+    ax.set_title("Phasic Component & SCR Events")
+    ax.legend(loc='upper right')
+    ax.set_ylabel("uS")
+    ax.grid(True)
+    
+    # 3. Motion (Optional)
+    if motion_signal is not None:
+        ax = axes[2]
+        # Use a lighter/grey shade for context
+        ax.plot(time_axis, motion_signal, color='#7f7f7f', alpha=0.6, label='Motion (ACC X)')
+        ax.set_title("Motion Context")
+        ax.set_xlabel("Time (s)")
+        ax.legend(loc='upper right')
+        ax.set_ylabel("Acc (g)")
+        ax.grid(True)
+    else:
+        axes[1].set_xlabel("Time (s)")
+        
+    plt.tight_layout()
+    _save_plot(fig, "EDA_Decomposition", save_folder)
+    return fig
+
+def plot_ecg_audit(
+    time_axis: np.ndarray,
+    clean_ecg: np.ndarray,
+    peaks: np.ndarray,
+    threshold: float,
+    title: str = "ECG Audit",
+    save_folder: str = None
+):
+    """
+    Visualizes ECG signal and detected R-peaks.
+    
+    Args:
+        time_axis: Time vector in seconds.
+        clean_ecg: Processed ECG signal.
+        peaks: Indices of detected R-peaks.
+        threshold: Detection threshold used.
+    """
+    set_plot_style()
+    colors = sns.color_palette()
+    primary = colors[0] # #4B0082
+    contrast = colors[1] # #FF8C00
+    
+    fig = plt.figure(figsize=(12, 4))
+    plt.plot(time_axis, clean_ecg, color=primary, label='Processed ECG')
+    plt.plot(time_axis[peaks], clean_ecg[peaks], "o", color=contrast, markersize=6, label='R-Peaks')
+    plt.axhline(threshold, color='gray', linestyle=':', label='Threshold')
+    
+    # Calculate BPM for title
+    if len(peaks) > 1:
+        duration_min = (time_axis[-1] - time_axis[0]) / 60
+        bpm_val = len(peaks) / duration_min
+        title = f"{title}: Found {len(peaks)} beats (~{bpm_val:.0f} BPM)"
+        
+    plt.title(title)
+    plt.xlabel("Time (s)")
+    plt.ylabel("Amplitude")
+    plt.legend()
+    plt.grid(True)
+    plt.tight_layout()
+    _save_plot(fig, title, save_folder)
+    return fig
+
+def _get_feature_unit(feature_name: str) -> str:
+    """Helper to deduce unit from feature name substring."""
+    f = feature_name.lower()
+    if 'eda' in f: return '($\mu S$)'
+    if 'temp' in f:
+        if 'slope' in f: return '($^\circ C/s$)'
+        return '($^\circ C$)'
+    if 'acc' in f: return '($g$ or $m/s^2$)'
+    if 'ecg' in f:
+        if 'hr' in f or 'bpm' in f: return '(bpm)'
+        if 'rmssd' in f or 'sdnn' in f: return '(s)'
+        return '(mV)'
+    if 'resp' in f:
+        if 'rate_bpm' in f: return '(bpm)'
+        if 'rate_hz' in f: return '(Hz)'
+        return '(a.u.)'
+    if 'bvp' in f:
+        if 'hr' in f: return '(bpm)'
+        return '(a.u.)'
+    return ''
+
+def _create_balanced_grid(n_plots: int, title: str = "", base_size: float = 4.0):
+    """
+    Creates a mosaic grid (rows with different column counts) to ensure:
+    1. No empty slots (all rows full).
+    2. Consistent aspect ratio (plot shape preserved, though size may vary).
+    """
+    # 1. Solve for row configuration: x rows of c cols, y rows of c+1 cols
+    # Objective: Minimize total rows, prefer 3-5 columns.
+    best_sol = None # (x, y, c)
+    min_rows = float('inf')
+    
+    # Range of column counts to consider
+    candidates = [3, 4, 5]
+    if n_plots < 3: candidates = [n_plots]
+    
+    for c in candidates:
+        if n_plots == c:
+            best_sol = (1, 0, c)
+            break
+            
+        c_next = c + 1
+        # Solve x*c + y*(c+1) = n_plots
+        max_y = n_plots // c_next
+        for y in range(max_y + 1):
+            remainder = n_plots - (y * c_next)
+            if remainder >= 0 and remainder % c == 0:
+                x = remainder // c
+                total = x + y
+                if total < min_rows:
+                    min_rows = total
+                    best_sol = (x, y, c)
+    
+    # Fallback if no clean mosaic found (should handle large N, but for small N just grid)
+    if best_sol is None:
+        cols = 4 if n_plots > 4 else n_plots
+        rows = int(np.ceil(n_plots / cols))
+        # Default behavior: Just standard grid (stretch handled previously, or gaps)
+        # We revert to gaps if solver fails (unlikely for N > 5)
+        fig = plt.figure(figsize=(base_size * cols, base_size * 0.8 * rows))
+        return fig, [fig.add_subplot(rows, cols, i+1) for i in range(n_plots)]
+
+    x, y, c = best_sol
+    # Configuration: x rows of c, y rows of c+1
+    row_config = [c] * x + [c + 1] * y
+    # Optional: Sort rows so larger plots (fewer cols) are at top? Or bottom?
+    # Current: Top=Smaller Density (Larger Plots), Bottom=Higher Density
+    
+    # 2. Calculate Row Heights to preserve Aspect Ratio (Height = Width * 0.75)
+    # Figure Width is fixed constant relative to 'Base Size' (e.g. normalized to Max Cols)
+    # Let Figure Width = base_size * Max(Cols)
+    # Then Plot Width in row i = Figure Width / Cols_i
+    # Plot Height in row i = Plot Width * 0.75
+    
+    max_cols = max(row_config)
+    fig_width = base_size * max_cols
+    
+    row_heights = []
+    for rc in row_config:
+        w_plot = fig_width / rc
+        h_plot = w_plot * 0.7 # Aspect ratio 0.7
+        row_heights.append(h_plot)
+        
+    total_height = sum(row_heights)
+    
+    # 3. Create Figure using specific rects or GridSpecs
+    fig = plt.figure(figsize=(fig_width, total_height))
+    
+    # Use nested GridSpec to handle varying columns per row
+    # Outer GridSpec: Rows
+    gs_outer = mpl.gridspec.GridSpec(len(row_config), 1, figure=fig, height_ratios=row_heights)
+    
+    axes = []
+    for i, n_cols in enumerate(row_config):
+        # Inner GridSpec: Columns for this row
+        gs_inner = mpl.gridspec.GridSpecFromSubplotSpec(1, n_cols, subplot_spec=gs_outer[i])
+        for j in range(n_cols):
+            axes.append(fig.add_subplot(gs_inner[0, j]))
+            
+    if title:
+        # Adjust top margin
+        fig.suptitle(title, y=1.0 + (0.2/total_height), fontsize=16)
+
+    return fig, axes
+
+def plot_feature_separability(
+    df: pd.DataFrame, # type: ignore
+    feature_cols: List[str],
+    label_col: str,
+    title: str = "Feature Separability",
+    save_folder: str = None
+):
+    """
+    Generates Violin plots + Strip plots to show feature distribution by class.
+    """
+    set_plot_style()
+    n_cols = len(feature_cols)
+    
+    fig, axes = _create_balanced_grid(n_cols, title, base_size=3.5) # Reduced base size for mosaic
+    
+    for i, col_name in enumerate(feature_cols):
+        ax = axes[i]
+        if col_name not in df.columns:
+            ax.text(0.5, 0.5, f"{col_name} not found", ha='center')
+            continue
+            
+        n_classes = len(df[label_col].unique())
+        current_palette = sns.color_palette()[:n_classes]
+
+        sns.violinplot(
+            x=label_col, 
+            y=col_name, 
+            data=df, 
+            ax=ax, 
+            hue=label_col,
+            inner=None, 
+            palette=current_palette, 
+            legend=False,
+            density_norm='width',
+            linewidth=1.5,
+            saturation=1.0, 
+            alpha=0.8       
+        )
+        
+        sns.boxplot(
+            x=label_col,
+            y=col_name,
+            data=df,
+            ax=ax,
+            width=0.1, 
+            showcaps=False,
+            boxprops={'facecolor': 'white', 'edgecolor': '#333333', 'alpha': 0.4, 'zorder': 10},
+            whiskerprops={'color': '#333333', 'linewidth': 2, 'zorder': 10},
+            medianprops={'color': '#333333', 'linewidth': 2, 'zorder': 10},
+            fliersize=0 
+        )
+        
+        sns.stripplot(
+            x=label_col, 
+            y=col_name, 
+            data=df, 
+            ax=ax, 
+            jitter=True, 
+            alpha=0.7,   
+            color='#202020', 
+            size=4       
+        )
+        
+        unit_str = _get_feature_unit(col_name)
+        ax.set_title(f"{col_name} {unit_str}", fontsize=11)
+        ax.set_xlabel("")
+        ax.set_ylabel("")
+
+    plt.tight_layout()
+    _save_plot(fig, title, save_folder)
+    return fig
+
+def plot_feature_comparison_bars(
+    df: pd.DataFrame, 
+    feature_cols: List[str], 
+    label_col: str, 
+    title: str = "Feature Comparison (Mean \u00B1 SE)",
+    save_folder: str = None
+):
+    """
+    Generates Bar plots with Standard Error bars.
+    """
+    set_plot_style()
+    n_cols = len(feature_cols)
+    
+    fig, axes = _create_balanced_grid(n_cols, title, base_size=3.5)
+    
+    for i, col_name in enumerate(feature_cols):
+        ax = axes[i]
+        if col_name not in df.columns:
+            ax.text(0.5, 0.5, f"{col_name} not found", ha='center')
+            continue
+            
+        n_classes = len(df[label_col].unique())
+        current_palette = sns.color_palette()[:n_classes]
+        
+        sns.barplot(
+            x=label_col,
+            y=col_name,
+            data=df,
+            ax=ax,
+            palette=current_palette,
+            errorbar='se', 
+            capsize=0.1,
+            err_kws={'linewidth': 2, 'color': '#333333'},
+            edgecolor='#333333',
+            linewidth=1.5,
+            alpha=0.9
+        )
+        
+        ax.set_title(col_name, fontsize=11)
+        ax.set_xlabel("")
+        ax.set_ylabel("Mean Value")
+        
+    plt.tight_layout()
+    _save_plot(fig, title, save_folder)
+    return fig
+
+def plot_feature_importance_cohens_d(
+    df: pd.DataFrame, 
+    feature_cols: List[str], 
+    label_col: str, 
+    class_1: str = 'Stress',
+    class_0: str = 'Baseline',
+    title: str = "Feature Separability (Cohen's d)",
+    save_folder: str = None
+):
+    """
+    Calculates and plots Cohen's d effect size for each feature (Single Plot).
+    X-axis: Cohen's d (Metric of separability).
+    Y-axis: Features.
+    
+    Positive d: Higher in Stress.
+    Negative d: Higher in Baseline.
+    """
+    set_plot_style()
+    
+    effect_sizes = []
+    
+    group1 = df[df[label_col] == class_1]
+    group0 = df[df[label_col] == class_0]
+    
+    for feat in feature_cols:
+        if feat not in df.columns: continue
+        
+        g1 = group1[feat].dropna().values
+        g0 = group0[feat].dropna().values
+        
+        if len(g1) < 2 or len(g0) < 2:
+            d = 0
+        else:
+            n1, n2 = len(g1), len(g0)
+            var1, var2 = np.var(g1, ddof=1), np.var(g0, ddof=1)
+            mean1, mean2 = np.mean(g1), np.mean(g0)
+            
+            # Pooled SD
+            pooled_sd = np.sqrt(((n1 - 1) * var1 + (n2 - 1) * var2) / (n1 + n2 - 2))
+            
+            if pooled_sd == 0:
+                d = 0
+            else:
+                d = (mean1 - mean2) / pooled_sd
+                
+        effect_sizes.append({'Feature': feat, 'Cohens_d': d})
+        
+    df_effect = pd.DataFrame(effect_sizes)
+    # Sort by absolute magnitude for visibility, or by signed value
+    df_effect = df_effect.sort_values(by='Cohens_d', ascending=True)
+    
+    # Create Colors based on sign
+    # Purple (#4B0082) for Negative (Higher in Baseline)
+    # Orange (#FF8C00) for Positive (Higher in Stress)
+    colors = ['#4B0082' if x < 0 else '#FF8C00' for x in df_effect['Cohens_d']]
+    
+    fig, ax = plt.subplots(figsize=(10, max(6, len(feature_cols) * 0.4)))
+    
+    bars = ax.barh(df_effect['Feature'], df_effect['Cohens_d'], color=colors, edgecolor='#333333', alpha=0.9)
+    
+    # Add vertical line at 0
+    ax.axvline(0, color='black', linewidth=1, linestyle='-')
+    
+    # Add guidelines for Effect Size interpretation
+    # Small=0.2, Medium=0.5, Large=0.8
+    for d_val, style in zip([0.2, 0.5, 0.8, -0.2, -0.5, -0.8], [':', '--', '-.']*2):
+        ax.axvline(d_val, color='gray', alpha=0.3, linestyle=style, zorder=0)
+        
+    ax.set_title(title)
+    ax.set_xlabel(f"Cohen's d (Effect Size)\n← Higher in {class_0} | Higher in {class_1} →")
+    
+    # Add values to bars
+    for bar in bars:
+        width = bar.get_width()
+        label_x_pos = width + np.sign(width) * 0.05
+        ha = 'left' if width > 0 else 'right'
+        
+        ax.text(label_x_pos, bar.get_y() + bar.get_height()/2, f'{width:.2f}',
+                va='center', ha=ha, fontsize=9, fontweight='bold', color='#333333')
+
+    plt.tight_layout()
+    _save_plot(fig, title, save_folder)
+    return fig
+
+def plot_feature_pairplot(
+    df: pd.DataFrame,
+    feature_cols: List[str],
+    label_col: str,
+    title: str = "Feature Pairwise Relationships",
+    save_folder: str = None
+):
+    """
+    Generates a Pair Plot (Scatter matrix) for selected features.
+    
+    Args:
+        df: Dataframe containing features and label.
+        feature_cols: List of features to plot. Limit this to 5-8 for readability.
+        label_col: Column name to use for Hue (color coding).
+        title: Figure title.
+    """
+    set_plot_style()
+    
+    # We explicitly define the palette dict to map the label strings to our colors
+    # Assuming standard project labels if possible, but auto-detecting unique values
+    unique_labels = sorted(df[label_col].unique())
+    
+    # Map 'Baseline' to Purple, 'Stress' to Orange if those exact strings exist
+    # Otherwise fallback to the cycle
+    palette_map = {}
+    if 'Baseline' in unique_labels and 'Stress' in unique_labels:
+        palette_map['Baseline'] = '#4B0082' # Deep Purple
+        palette_map['Stress'] = '#FF8C00'   # Orange
+    else:
+        # Fallback to defaults
+        colors = ["#4B0082", "#FF8C00", "#9370DB", "#FFA500"]
+        palette_map = dict(zip(unique_labels, colors))
+
+    # Create PairGrid
+    g = sns.pairplot(
+        df[feature_cols + [label_col]], 
+        hue=label_col,
+        palette=palette_map,
+        diag_kind='kde',
+        plot_kws={'alpha': 0.7, 's': 50, 'edgecolor': 'white', 'linewidth': 0.5},
+        diag_kws={'fill': True, 'alpha': 0.5},
+        height=2.5
+    )
+    
+    g.fig.suptitle(title, y=1.02, fontsize=16)
+    
+    _save_plot(g.fig, title, save_folder)
+    return g
+
+def plot_correlation_matrix(
+    df: pd.DataFrame,
+    feature_cols: List[str],
+    title: str = "Feature Correlation Matrix",
+    save_folder: str = None
+):
+    """
+    Plots a heatmap of the correlation matrix for selected features.
+    """
+    set_plot_style()
+    
+    corr = df[feature_cols].corr()
+    
+    # Mask the upper triangle
+    mask = np.triu(np.ones_like(corr, dtype=bool))
+    
+    fig, ax = plt.subplots(figsize=(10, 8))
+    
+    # Set background to dark gray for the masked area
+    ax.set_facecolor('#404040')
+    
+    # Diverging colormap (Purple - White - Orange)
+    cmap = LinearSegmentedColormap.from_list(
+        "custom_div", 
+        ['#4B0082', '#FFFFFF', '#FF8C00']
+    )
+    
+    sns.heatmap(
+        corr, 
+        mask=mask, 
+        cmap=cmap, 
+        vmax=1.0, 
+        vmin=-1.0, 
+        center=0,
+        square=True, 
+        linewidths=.5, 
+        cbar_kws={"shrink": .5},
+        annot=True,
+        fmt=".2f"
+    )
+    
+    ax.set_title(title)
+    plt.tight_layout()
+    _save_plot(fig, title, save_folder)
+    return fig
+
+def get_top_discriminative_features(
+    df: pd.DataFrame, 
+    feature_cols: List[str], 
+    label_col: str, 
+    n: int = 6,
+    class_1: str = 'Stress',
+    class_0: str = 'Baseline'
+) -> List[str]:
+    """
+    Selects top features based on Cohen's d effect size, identifying diversity.
+    Prioritizes the highest-ranked feature per modality if redundancy is detected.
+    """
+    effect_sizes = []
+    
+    group1 = df[df[label_col] == class_1]
+    group0 = df[df[label_col] == class_0]
+    
+    for feat in feature_cols:
+        # Skip redundant Hz features (keep bpm)
+        if '_Hz' in feat: continue
+        
+        g1 = group1[feat].dropna().values
+        g0 = group0[feat].dropna().values
+        
+        if len(g1) < 2 or len(g0) < 2:
+            d = 0
+        else:
+            diff = np.mean(g1) - np.mean(g0)
+            pooled_sd = np.sqrt((np.var(g1, ddof=1) + np.var(g0, ddof=1)) / 2)
+            d = abs(diff / pooled_sd) if pooled_sd > 0 else 0
+            
+        effect_sizes.append((feat, d))
+        
+    # Sort by absolute effect size
+    effect_sizes.sort(key=lambda x: x[1], reverse=True)
+    
+    # Filter for diversity
+    # Strategy: Allow max 1 'temp', 2 'eda', 2 'resp', 2 'ecg', 2 'acc' unless we run out
+    final_feats = []
+    counts = {'temp': 0, 'eda': 0, 'resp': 0, 'ecg': 0, 'acc': 0, 'bvp': 0}
+    
+    for f, d in effect_sizes:
+        # Identify type
+        ftype = next((k for k in counts.keys() if k in f), 'other')
+        
+        # Hard limits per type to force diversity
+        limit = 1 if ftype == 'temp' else 2
+        
+        if counts.get(ftype, 0) < limit:
+            final_feats.append(f)
+            if ftype in counts: counts[ftype] += 1
+            
+        if len(final_feats) >= n: break
+            
+    return final_feats
+
+def plot_temp_audit(
+    time_axis: np.ndarray,
+    temp_signal: np.ndarray,
+    slope: float = None,
+    title: str = "Temperature Trend Audit",
+    save_folder: str = None
+) -> plt.Figure:
+    """
+    Visualizes Temperature signal and its linear trend.
+    If 'slope' is provided (in units/sec), it is used for the trend line.
+    Otherwise, the slope is calculated from the data.
+    """
+    set_plot_style()
+    fig, ax = plt.subplots(figsize=(10, 5))
+    
+    # Raw Signal
+    ax.plot(time_axis, temp_signal, label='Raw Temp', color='#4B0082', linewidth=2)
+    
+    # Determine FS from time axis
+    estimated_fs = 1.0 / np.mean(np.diff(time_axis))
+    x = np.arange(len(temp_signal))
+    
+    if slope is not None:
+        # feature 'slope' is per second. Convert to per sample.
+        slope_per_sample = slope / estimated_fs
+        
+        # Calculate intercept (line passes through centroid)
+        mean_x = np.mean(x)
+        mean_y = np.mean(temp_signal)
+        intercept = mean_y - slope_per_sample * mean_x
+        
+        label_text = f'Feature Slope: {slope:.4f}/s'
+    else:
+        # Recalculate
+        slope_calc, intercept, _, _, _ = stats.linregress(x, temp_signal)
+        slope_per_sample = slope_calc
+        slope = slope_calc * estimated_fs
+        label_text = f'Calc Slope: {slope:.4f}/s'
+    
+    fit_line = slope_per_sample * x + intercept
+    
+    ax.plot(time_axis, fit_line, label=label_text, 
+            color='#FF8C00', linestyle='--', linewidth=2)
+    
+    ax.set_title(title)
+    ax.set_xlabel("Time (s)")
+    ax.set_ylabel("Temperature (°C)")
+    ax.legend()
+    
+    # Add annotation
+    ax.text(0.05, 0.95, label_text, 
+            transform=ax.transAxes, bbox=dict(facecolor='white', alpha=0.8, boxstyle='round'))
+            
+    _save_plot(fig, title, save_folder)
+    return fig
+
+def plot_resp_audit(
+    time_axis: np.ndarray,
+    resp_signal: np.ndarray,
+    fs: float,
+    detected_rate: float = None,
+    title: str = "Respiration Rate Audit",
+    save_folder: str = None
+) -> plt.Figure:
+    """
+    Visualizes Respiration signal and its Power Spectral Density (PSD)
+    to audit the dominant frequency (Respiration Rate).
+    """
+    set_plot_style()
+    fig = plt.figure(figsize=(12, 6))
+    gs = GridSpec(1, 2, width_ratios=[2, 1])
+    
+    # 1. Time Domain
+    ax0 = fig.add_subplot(gs[0])
+    ax0.plot(time_axis, resp_signal, color='#4B0082', label='Resp Signal')
+    ax0.set_title("Time Domain")
+    ax0.set_xlabel("Time (s)")
+    ax0.set_ylabel("Amplitude")
+    ax0.legend()
+    
+    # 2. Frequency Domain (PSD)
+    ax1 = fig.add_subplot(gs[1])
+    freqs, psd = signal.welch(resp_signal, fs=fs, nperseg=len(resp_signal), window='hann')
+    
+    # Focus on physiological range 0-1Hz
+    mask = (freqs <= 1.0)
+    ax1.plot(freqs[mask], psd[mask], color='#FF8C00', label='PSD')
+    
+    # Find peak in valid range (0.1 - 0.5 Hz)
+    valid_mask = (freqs >= 0.1) & (freqs <= 0.5)
+    
+    if detected_rate is not None:
+        # If rate is provided (from robust extractor), visualize that specific point
+        # We find the PSD value at that frequency (interpolation or nearest)
+        idx = (np.abs(freqs - detected_rate)).argmin()
+        peak_freq = freqs[idx]
+        peak_pow = psd[idx]
+        
+        ax1.plot(peak_freq, peak_pow, 'o', color="black", label=f'Detected: {peak_freq:.2f}Hz')
+        ax1.axvline(peak_freq, color="black", linestyle=':', alpha=0.5)
+        ax1.text(peak_freq + 0.02, peak_pow, f"Rate: {peak_freq*60:.1f} bpm",
+                 bbox=dict(facecolor='white', alpha=0.8, boxstyle='round'))
+                 
+    elif np.any(valid_mask):
+        # Fallback to simple argmax if no rate provided
+        f_valid = freqs[valid_mask]
+        p_valid = psd[valid_mask]
+        peak_idx = np.argmax(p_valid)
+        peak_freq = f_valid[peak_idx]
+        peak_pow = p_valid[peak_idx]
+        
+        ax1.plot(peak_freq, peak_pow, 'ro', label=f'Peak: {peak_freq:.2f}Hz')
+        ax1.axvline(peak_freq, color='r', linestyle=':', alpha=0.5)
+        ax1.text(0.5, 0.9, f"Rate: {peak_freq*60:.1f} bpm", transform=ax1.transAxes, ha='center',
+                 bbox=dict(facecolor='white', alpha=0.8, boxstyle='round'))
+
+    ax1.set_title("Frequency Domain (PSD)")
+    ax1.set_xlabel("Frequency (Hz)")
+    ax1.set_ylabel("Power Density")
+    ax1.legend()
+    
+    plt.suptitle(title, y=1.02)
+    plt.tight_layout()
+    _save_plot(fig, title, save_folder)
+    return fig
+
+
+def _plot_styled_violin(ax, data, y, color):
+    """
+    Internal helper to plot a consistent 'Stress-style' violin with inner boxplot.
+    Does NOT plot the strip points (handled separately).
+    """
+    # 1. Violin (Outer Shape)
+    sns.violinplot(
+        y=data[y],
+        ax=ax,
+        color=color,
+        inner=None, 
+        density_norm='width',
+        linewidth=1.5,
+        saturation=1.0,
+        alpha=0.8,
+        width=0.7
+    )
+    
+    # 2. Boxplot (Inner Stats)
+    sns.boxplot(
+        y=data[y],
+        ax=ax,
+        width=0.1,
+        showcaps=False,
+        boxprops={'facecolor': 'white', 'edgecolor': '#333333', 'alpha': 0.4, 'zorder': 10},
+        whiskerprops={'color': '#333333', 'linewidth': 2, 'zorder': 10},
+        medianprops={'color': '#333333', 'linewidth': 2, 'zorder': 10},
+        fliersize=0
+    )
+
+def plot_model_diagnostics(results_df: pd.DataFrame, save_folder: str = None):
+    """
+    Generates a 2x2 diagnostic panel for model verification (LOSO).
+    
+    Panels:
+    1. Global Confusion Matrix (Counts)
+    2. ROC Curves (Global + Per-Subject)
+    3. Mean Subject Confusion Matrix (Normalized +/- SE)
+    4. Accuracy Distribution (Violin + Strip)
+    """
+    subjects = sorted(results_df['subject_id'].unique())
+    # Color Constants
+    DEEP_PURPLE = "#4B0082"
+    DARK_ORANGE = "#FF8C00"
+    cmap_purple = LinearSegmentedColormap.from_list("custom_purple", ["#fafafa", DEEP_PURPLE])
+    
+    # Setup Figure
+    fig, axes = plt.subplots(2, 2, figsize=(18, 14), constrained_layout=True)
+    
+    # --- 1. Global Confusion Matrix (Top-Left) ---
+    ax_cm = axes[0, 0]
+    cm = confusion_matrix(results_df['true'], results_df['pred'])
+    acc_pooled = accuracy_score(results_df['true'], results_df['pred'])
+    sns.heatmap(cm, annot=True, fmt='d', cmap=cmap_purple, ax=ax_cm, cbar=False,
+                xticklabels=['Baseline', 'Stress'], yticklabels=['Baseline', 'Stress'],
+                annot_kws={"size": 14, "weight": "bold"})
+    ax_cm.set_title(f'Global CM (Pooled) - Acc: {acc_pooled:.1%}', fontsize=16)
+    ax_cm.set_ylabel('True Label', fontsize=12)
+    ax_cm.set_xlabel('Predicted Label', fontsize=12)
+    
+    # --- 2. ROC Curves (Top-Right) ---
+    ax_roc = axes[0, 1]
+    subject_palette = sns.color_palette("plasma", n_colors=len(subjects))
+    subj_color_map = dict(zip(subjects, subject_palette))
+    
+    for sub in subjects:
+        sub_df = results_df[results_df['subject_id'] == sub]
+        if len(sub_df['true'].unique()) < 2: continue
+        
+        fpr_s, tpr_s, _ = roc_curve(sub_df['true'], sub_df['prob'])
+        ax_roc.plot(fpr_s, tpr_s, color=subj_color_map[sub], alpha=0.5, lw=2)
+        
+        # Add labels roughly at the "elbow"
+        mid_idx = len(fpr_s) // 2
+        ax_roc.text(fpr_s[mid_idx], tpr_s[mid_idx], sub, 
+                   fontsize=8, color=subj_color_map[sub], fontweight='bold')
+                   
+    # Global
+    fpr, tpr, _ = roc_curve(results_df['true'], results_df['prob'])
+    roc_auc = auc(fpr, tpr)
+    ax_roc.plot(fpr, tpr, color=DARK_ORANGE, lw=5, label=f'Global (AUC = {roc_auc:.2f})')
+    ax_roc.plot([0, 1], [0, 1], color='navy', lw=2, linestyle='--')
+    ax_roc.set_title('ROC Curves (Subject Variability)', fontsize=16)
+    ax_roc.set_xlabel('False Positive Rate', fontsize=12)
+    ax_roc.set_ylabel('True Positive Rate', fontsize=12)
+    ax_roc.legend(loc="lower right")
+    ax_roc.grid(alpha=0.3)
+    
+    # --- 3. Mean Subject Confusion Matrix (Bottom-Left) ---
+    ax_mcm = axes[1, 0]
+    
+    # Collect normalized CMs and Accuracies
+    cms = []
+    subject_accuracies = []
+    for sub in subjects:
+        sub_df = results_df[results_df['subject_id'] == sub]
+        # Normalize by true (Rows sum to 1) -> Recall per class
+        # Labels=[0,1] ensures shape (2,2) even if 1 class missing
+        c = confusion_matrix(sub_df['true'], sub_df['pred'], labels=[0, 1], normalize='true')
+        cms.append(c)
+        acc = accuracy_score(sub_df['true'], sub_df['pred'])
+        subject_accuracies.append({'Subject': sub, 'Accuracy': acc})
+        
+    cms = np.array(cms) # Shape (n_subjects, 2, 2)
+    mean_cm = np.mean(cms, axis=0)
+    se_cm = stats.sem(cms, axis=0)
+    
+    df_acc = pd.DataFrame(subject_accuracies).sort_values('Accuracy', ascending=False)
+    mean_subject_acc = df_acc['Accuracy'].mean()
+    
+    # Custom annotations
+    annot = np.empty_like(mean_cm, dtype=object)
+    for i in range(2):
+        for j in range(2):
+            annot[i, j] = f"{mean_cm[i, j]:.2f}\n±{se_cm[i, j]:.2f}"
+            
+    sns.heatmap(mean_cm, annot=annot, fmt='', cmap=cmap_purple, ax=ax_mcm, cbar=True,
+                xticklabels=['Baseline', 'Stress'], yticklabels=['Baseline', 'Stress'],
+                annot_kws={"size": 13, "weight": "bold"})
+    ax_mcm.set_title(f'Mean Subject CM (Subject-Normalized) - Avg Acc: {mean_subject_acc:.1%}', fontsize=16)
+    ax_mcm.set_ylabel('True Label', fontsize=12)
+    ax_mcm.set_xlabel('Predicted Label', fontsize=12)
+    
+    # --- 4. Accuracy Distribution (Bottom-Right) ---
+    ax_acc = axes[1, 1]
+    
+
+    # Violin Plot (Refactored to match Notebook 2 style)
+    _plot_styled_violin(ax_acc, df_acc, 'Accuracy', DARK_ORANGE)
+
+    # Strip Plot: Manual Scatter to ensure visibility and valid zorder
+    np.random.seed(42) # Consistent look
+    x_jitter = np.random.uniform(-0.04, 0.04, size=len(df_acc))
+
+    # Extract colors for each point based on subject map (same as ROC)
+    point_colors = [subj_color_map[sub] for sub in df_acc['Subject']]
+
+    # Scatter: Subject-Colored dots with Dark edges
+    ax_acc.scatter(x_jitter, df_acc['Accuracy'], 
+                   c=point_colors,               # Colored center
+                   edgecolors='#202020',         # Dark border
+                   linewidths=2.0,               
+                   s=65,                         
+                   zorder=200, 
+                   alpha=1.0)
+
+    # Place subject id label in the subject's color, very close to the dot (slightly above)
+    for i, (idx, row) in enumerate(df_acc.iterrows()):
+        ax_acc.text(x_jitter[i], row['Accuracy'] + 0.015, f"{row['Subject']}",
+                   color=subj_color_map[row['Subject']],
+                   fontsize=10,
+                   fontweight='bold',
+                   va='bottom', ha='center', zorder=201)
+
+    ax_acc.axhline(df_acc['Accuracy'].mean(), color=DEEP_PURPLE, linestyle='--', linewidth=2, label='Mean')
+    ax_acc.set_title('LOSO Accuracy Distribution', fontsize=16)
+    
+    # Standard 0-1 range + top headroom
+    ax_acc.set_ylim(0.0, 1.1)
+    
+    # Focus X-axis
+    ax_acc.set_xlim(-0.5, 0.5)
+    
+    # Add Tick on X-axis (Categorical)
+    ax_acc.set_xticks([0])
+    ax_acc.set_xticklabels(["All Subjects"], fontsize=12, fontweight='bold')
+    ax_acc.set_xlabel("")
+    
+    ax_acc.grid(axis='y', alpha=0.3)
+    ax_acc.grid(axis='y', alpha=0.3)
+    
+    _save_plot(fig, "Model_Diagnostics_Panel", save_folder)
     return fig

@@ -37,6 +37,8 @@ data/raw/*
 data/processed/*
 !data/processed/.gitkeep
 data/*.zip
+data/*.zip
+data/docs/*
 
 # Models and artifacts
 models/*
