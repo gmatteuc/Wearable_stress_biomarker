@@ -1388,15 +1388,19 @@ def plot_multiscale_heatmap(
     df: pd.DataFrame,
     channels: List[str], 
     title_prefix: str = "Feature Intensity",
-    save_folder: str = None
+    save_folder: str = None,
+    tensor_micro: np.ndarray = None
 ):
     """
     Generates a Macro-View (entire session) and Micro-View (single window) heatmap.
     
     Args:
-        tensor_norm: Standardized Tensor (N, C, T)
-        df: DataFrame matching the tensor (for indices and labels)
-        channels: List of channel names
+        tensor_norm: Standardized Tensor (N, C, T) used for Macro View (and Micro if tensor_micro is None).
+        df: DataFrame matching the tensor (for indices and labels).
+        channels: List of channel names.
+        title_prefix: Title prefix.
+        save_folder: Folder to save plot.
+        tensor_micro: Optional specific tensor for the Micro View (e.g. Instance Normalized).
     """
     set_plot_style()
     import matplotlib.patches as patches
@@ -1428,12 +1432,10 @@ def plot_multiscale_heatmap(
     )
 
     # Highlight Gaps (NaNs) with a dark hatched pattern
-    ax1.set_facecolor("#303030") # Dark gray background
-    ax1.patch.set_hatch("//")    # Diagonal stripes
-    ax1.patch.set_edgecolor("#101010") 
+    ax1.set_facecolor("#4A4A4A") # Dark gray background
 
-    ax1.set_title(f"Macro-View: {title_prefix} (Timeline)")
-    ax1.set_xlabel("Original Window Index (Hatched/Gray = Gaps/Excluded)")
+    ax1.set_title(f"Macro-View (Global Normalization)")
+    ax1.set_xlabel("Original Window Index (Gray = Excluded)")
     ax1.set_ylabel("Channel")
 
     # --- Plot 2: Micro View (Single Window Detail) ---
@@ -1449,7 +1451,9 @@ def plot_multiscale_heatmap(
         target_iloc = df.index.get_loc(original_idx)
         if isinstance(target_iloc, slice): target_iloc = target_iloc.start # Safety
         
-        window_data = tensor_norm[target_iloc]
+        # Select tensor for Micro View
+        micro_source = tensor_micro if tensor_micro is not None else tensor_norm
+        window_data = micro_source[target_iloc]
         
         sns.heatmap(
             window_data, 
@@ -1461,14 +1465,16 @@ def plot_multiscale_heatmap(
             xticklabels=350, # Mark every 10 seconds (35Hz * 10)
             ax=ax2
         )
-        ax2.set_title(f"Micro-View: Detail of Window #{original_idx} (Stress)")
+        # Dynamic Title based on tensor source
+        micro_title_suffix = "(Instance Normalization)" if tensor_micro is not None else ""
+        ax2.set_title(f"Micro-View {micro_title_suffix}: Detail of Window #{original_idx}")
         ax2.set_xlabel("Time Samples (0-2100 @ 35Hz)")
 
         # Highlight the selected window on the Macro plot
-        rect = patches.Rectangle((original_idx, 0), width=5, height=len(channels), linewidth=2, edgecolor="#4A4A4A", facecolor="none")
+        rect = patches.Rectangle((original_idx, 0), width=5, height=len(channels), linewidth=2, edgecolor="#DAA520", facecolor="none")
         ax1.add_patch(rect)
         ax1.annotate("Zoomed Window", xy=(original_idx, len(channels)), xytext=(original_idx, len(channels)+1.5),
-                     arrowprops=dict(facecolor="#4A4A4A", shrink=0.05), color="#4A4A4A", ha="center", weight="bold")
+                     arrowprops=dict(facecolor="#DAA520", shrink=0.05), color="#DAA520", ha="center", weight="bold")
 
     else:
         ax2.text(0.5, 0.5, "No Stress Windows Found", ha="center", va="center")

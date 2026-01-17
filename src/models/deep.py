@@ -100,5 +100,3 @@ class ResNet1D(nn.Module):
         x = self.classifier(x)
         return x
 
-# Alias for backward compatibility if needed, but we prefer ResNet now
-Simple1DCNN = ResNet1D

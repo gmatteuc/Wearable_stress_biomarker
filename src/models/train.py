@@ -29,7 +29,7 @@ and artifact saving (models, scalers, metrics).
 
 from src.config import load_config, PROJECT_ROOT
 from src.features.feature_extraction import FeatureExtractor
-from src.models.deep import Simple1DCNN
+from src.models.deep import ResNet1D
 from src.models.evaluate import evaluate_model
 from src.utils.logger import get_logger
 
@@ -259,7 +259,7 @@ class Trainer:
                 num_channels = X.shape[1]
                 num_classes = len(unique_labels)
                 seq_len = X.shape[2]
-                model = Simple1DCNN(num_channels, num_classes, seq_len).to(device)
+                model = ResNet1D(num_channels, num_classes, seq_len).to(device)
                 
                 # Train Configuration (Regularized + Scheduled)
                 # Label Smoothing helps with noisy physiological labels and calibration
@@ -371,7 +371,7 @@ class Trainer:
             full_ds = TensorDataset(torch.tensor(X_norm, dtype=torch.float32), torch.tensor(y_mapped, dtype=torch.long))
             full_loader = DataLoader(full_ds, batch_size=64, shuffle=True)
             
-            final_model = Simple1DCNN(X.shape[1], len(unique_labels), X.shape[2]).to(device)
+            final_model = ResNet1D(X.shape[1], len(unique_labels), X.shape[2]).to(device)
             optimizer = optim.Adam(final_model.parameters(), lr=1e-3)
             
             for epoch in range(10):
@@ -415,7 +415,7 @@ class Trainer:
             num_classes = len(unique_labels)
             seq_len = X.shape[2]
             
-            model = Simple1DCNN(num_channels, num_classes, seq_len).to(device)
+            model = ResNet1D(num_channels, num_classes, seq_len).to(device)
             criterion = nn.CrossEntropyLoss()
             optimizer = optim.Adam(model.parameters(), lr=1e-3)
             

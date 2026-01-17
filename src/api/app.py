@@ -16,7 +16,7 @@ import torch
 import pandas as pd
 from pathlib import Path
 
-from src.models.deep import Simple1DCNN
+from src.models.deep import ResNet1D
 from src.features.sqi import SignalQualityIndex
 from src.config import load_config
 from src.utils.logger import get_logger

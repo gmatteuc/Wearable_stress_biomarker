@@ -101,25 +101,43 @@ We are building an "Engineering Grade" pipeline with strict quality controls (SQ
         - **Result**: Accuracy improved to **94.6%** with F1-Stress **0.92**. Validated in `notebooks/04_deep_learning_verification.ipynb`.
         - **Learning Dynamics**: Observed higher variance in validation loss due to LOSO on small N (15 subjects), but final generalization is superior.
 
-## 5. Next Steps
-1.  [x] **Finalize Feature Extraction**:
-    - Run `python -m src.features.build_features` to generate `data/processed/features.parquet`.
-2.  [x] **Model Baseline & MLOps Verification**:
-    - Create `notebooks/03_model_verification.ipynb`.
-    - Implemented strict **Leave-One-Subject-Out (LOSO)** validation.
-    - Verified **Calibration** (Reliability Diagrams) and **Abstention Policy**.
-    - **Status**: Logistic Regression Baseline confirmed (F1-Stress ~0.90 after leakage fix).
-3.  [ ] **Deep Learning Model (CNN)**:
-    - The `train_deep` method exists in `train.py` but uses a basic `Simple1DCNN`.
-    - **Action**: Create `notebooks/04_deep_learning.ipynb` (or extend 03) to verify the Deep Learning pipeline on Raw Windows.
-    - **Comparison**: Benchmark Deep Learning (Raw Signals) vs. Classical (Features).
-4.  [ ] **Documentation & Deployment**:
-    - Finalize `README.md` with reproduction steps.
-    - Export `requirements.txt`.
-        - **Artifact Versioning:** Saving `scaler.joblib`, `model.pkl`, and `metrics.json` clearly in `models/` folder.
-        - **Traceability:** Logging specific commit hash or experiment ID.
-3.  [ ] **Training Pipeline**:
-    - Create `src/models/train.py` implementing the logic verified in the notebook.
+
+## 5. Current ML Progress (as of Jan 17, 2026)
+- [x] **Feature Extraction**: Complete and reproducible for CHEST modality.
+- [x] **Classical Baseline**: LOSO-validated logistic regression, with calibration and abstention analysis.
+- [x] **Deep Learning**: ResNet1D + SE, with instance normalization, LOSO validation, and full diagnostic plots. All code refactored to use `ResNet1D` naming.
+- [x] **Visualization**: All key plots (timeline, heatmap, learning curves, ROC, calibration, abstention) are auto-saved and standardized.
+- [x] **Notebook Refactoring**: All ML logic now lives in scripts/modules; notebooks are for verification and reporting only.
+
+## 6. MLOps Next Steps (CHEST, then WRIST)
+
+**A. Pipeline Automation & Reproducibility**
+- [ ] Refactor all notebook logic (data loading, feature extraction, training, evaluation) into scripts/functions in `src/`.
+- [ ] Implement a CLI or single script (e.g., `python run_pipeline.py --modality chest`) to run the full pipeline and produce all artifacts/plots.
+- [ ] Parameterize pipeline for CHEST/WRIST modality selection.
+
+**B. Automated Reporting & Diagnostics**
+- [ ] Ensure all key diagnostic plots and metrics are auto-generated and saved to `reports/` or `notebooks/outputs/`.
+- [ ] (Optional) Generate a minimal HTML/Markdown report summarizing results for each run.
+
+**C. Deployment & Inference**
+- [ ] Implement FastAPI endpoint for `/predict_window` (CHEST, then WRIST), including SQI/abstention logic.
+- [ ] Add `/health` endpoint and minimal OpenAPI docs.
+
+**D. Testing & CI**
+- [ ] Expand unit tests to cover data, features, and model code.
+- [ ] Add a CI workflow (e.g., GitHub Actions) for linting and tests.
+
+**E. Documentation & Environment**
+- [ ] Update README with clear instructions for running the pipeline, training, and serving the model.
+- [ ] Export and pin `requirements.txt` or `environment.yml`.
+- [ ] Add a “MLOps Checklist” section to README.
+
+**F. (Optional) Experiment Tracking**
+- [ ] Integrate a lightweight experiment tracker (e.g., MLflow, wandb, or CSV logs).
+
+**G. (Optional) Wrist Modality**
+- [ ] Rerun the entire pipeline and reporting for WRIST data, using the same structure and diagnostics as CHEST.
 
 ## 6. Next Steps: Deep Learning (Jan 2026)
 
