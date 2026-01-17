@@ -1,4 +1,5 @@
 import argparse
+import copy
 import pandas as pd
 import numpy as np
 import yaml
@@ -203,80 +204,258 @@ class Trainer:
         logger.info(f"Results saved to {self.run_dir}")
 
     def train_deep(self):
+        # Determine Device
+        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        logger.info(f"Training on Device: {device}")
+        if device.type == 'cuda':
+             logger.info(f"GPU Name: {torch.cuda.get_device_name(0)}")
+
         X, y, groups = self.load_data()
         
         # Remap labels to 0..K-1
         unique_labels = sorted(np.unique(y))
         label_map = {l: i for i, l in enumerate(unique_labels)}
         y_mapped = np.array([label_map[l] for l in y])
-        
-        train_idx, test_idx = self.get_split(groups)
-        groups_test = groups[test_idx]
-        
-        # Standardize inputs (Channel-wise)
-        # Compute mean/std on Train
-        X_train = X[train_idx]
-        X_test = X[test_idx]
-        
-        # (N, C, T) -> calculate scalar mean/std per channel over N, T
-        means = X_train.mean(axis=(0, 2), keepdims=True)
-        stds = X_train.std(axis=(0, 2), keepdims=True) + 1e-6
-        
-        X_train = (X_train - means) / stds
-        X_test = (X_test - means) / stds
-        
-        # Convert to Torch
-        train_dataset = TensorDataset(torch.tensor(X_train, dtype=torch.float32), torch.tensor(y_mapped[train_idx], dtype=torch.long))
-        test_dataset = TensorDataset(torch.tensor(X_test, dtype=torch.float32), torch.tensor(y_mapped[test_idx], dtype=torch.long))
-        
-        train_loader = DataLoader(train_dataset, batch_size=64, shuffle=True)
-        test_loader = DataLoader(test_dataset, batch_size=64, shuffle=False)
-        
-        # Model
-        num_channels = X.shape[1]
-        num_classes = len(unique_labels)
-        seq_len = X.shape[2]
-        
-        model = Simple1DCNN(num_channels, num_classes, seq_len)
-        criterion = nn.CrossEntropyLoss()
-        optimizer = optim.Adam(model.parameters(), lr=1e-3)
-        
-        logger.info("Training Deep Model...")
-        epochs = 10 # Short for MVP
-        for epoch in range(epochs):
-            model.train()
-            total_loss = 0
-            for bx, by in train_loader:
-                optimizer.zero_grad()
-                out = model(bx)
-                loss = criterion(out, by)
-                loss.backward()
-                optimizer.step()
-                total_loss += loss.item()
-            logger.info(f"Epoch {epoch+1}/{epochs}, Loss: {total_loss/len(train_loader):.4f}")
-            
-        # Eval
-        model.eval()
-        probs = []
-        trues = []
-        with torch.no_grad():
-            for bx, by in test_loader:
-                out = model(bx) # Logits
-                prob = torch.softmax(out, dim=1)
-                probs.append(prob.numpy())
-                trues.append(by.numpy())
-                
-        y_probs = np.concatenate(probs)
-        y_trues = np.concatenate(trues)
-        
-        # Save artifacts
-        torch.save(model.state_dict(), self.run_dir / "model.pt")
-        normalizer = {'mean': means, 'std': stds}
-        joblib.dump(normalizer, self.run_dir / "normalizer.joblib")
-        
-        # Need original labels for display
         display_labels = [self.config['data']['labels'][l] for l in unique_labels]
-        evaluate_model(y_trues, y_probs, display_labels, self.run_dir, subject_ids=groups_test)
+        
+        if self.split_type == 'loso':
+            logger.info("Running Deep Learning LOSO Cross-Validation...")
+            gkf = GroupKFold(n_splits=len(np.unique(groups)))
+            
+            y_test_all = []
+            y_prob_all = []
+            groups_test_all = []
+            history_all = {} # Store history per fold
+            
+            # LOSO Loop
+            for i, (train_idx, test_idx) in enumerate(gkf.split(X, y_mapped, groups)):
+                subj = np.unique(groups[test_idx])
+                fold_id = f"Fold_{i+1}"
+                logger.info(f"Fold {i+1}: Validating on Subject {subj}")
+                
+                # Split
+                X_train, X_test = X[train_idx], X[test_idx]
+                y_train_fold, y_test_fold = y_mapped[train_idx], y_mapped[test_idx]
+                
+                # Normalize: Instance Normalization (Per-Window)
+                # Proven to work better for LOSO when subjects have different baselines (e.g. S2 vs S10)
+                # (N, C, T) -> Mean/Std over T axis only
+                mean_tr = X_train.mean(axis=2, keepdims=True)
+                std_tr = X_train.std(axis=2, keepdims=True) + 1e-6
+                X_train = (X_train - mean_tr) / std_tr
+                
+                mean_te = X_test.mean(axis=2, keepdims=True)
+                std_te = X_test.std(axis=2, keepdims=True) + 1e-6
+                X_test = (X_test - mean_te) / std_te
+                
+                # Convert to Torch
+                train_ds = TensorDataset(torch.tensor(X_train, dtype=torch.float32), torch.tensor(y_train_fold, dtype=torch.long))
+                test_ds = TensorDataset(torch.tensor(X_test, dtype=torch.float32), torch.tensor(y_test_fold, dtype=torch.long)) # Need DS for loader if batching test
+                
+                train_loader = DataLoader(train_ds, batch_size=64, shuffle=True)
+                test_loader = DataLoader(test_ds, batch_size=64, shuffle=False)
+                
+                # Init Model
+                num_channels = X.shape[1]
+                num_classes = len(unique_labels)
+                seq_len = X.shape[2]
+                model = Simple1DCNN(num_channels, num_classes, seq_len).to(device)
+                
+                # Train Configuration (Regularized + Scheduled)
+                # Label Smoothing helps with noisy physiological labels and calibration
+                criterion = nn.CrossEntropyLoss(label_smoothing=0.1)
+                
+                # 1. Weight Decay (L2 Regularization)
+                # Reduced LR slightly to 5e-4 to prevent initial loss spike
+                optimizer = optim.Adam(model.parameters(), lr=5e-4, weight_decay=1e-3)
+                
+                # 2. Learning Rate Scheduler
+                # Increased scheduler patience to 5 (slower decay)
+                scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='min', factor=0.5, patience=5)
+                
+                epochs = 50 # Increased to allow convergence
+                
+                # Early Stopping Vars
+                best_val_loss = float('inf')
+                patience = 15 # Less aggressive early stopping
+                trigger_times = 0
+                best_model_wts = copy.deepcopy(model.state_dict())
+                
+                fold_history = {'train_loss': [], 'val_loss': [], 'val_acc': []}
+                
+                for epoch in range(epochs):
+                    # Training Phase
+                    model.train()
+                    epoch_loss = 0
+                    for bx, by in train_loader:
+                        bx, by = bx.to(device), by.to(device)
+                        optimizer.zero_grad()
+                        out = model(bx)
+                        loss = criterion(out, by)
+                        loss.backward()
+                        optimizer.step()
+                        epoch_loss += loss.item()
+                    
+                    avg_train_loss = epoch_loss / len(train_loader)
+                    fold_history['train_loss'].append(avg_train_loss)
+
+                    # Validation Phase (Per Epoch)
+                    model.eval()
+                    val_loss = 0
+                    correct = 0
+                    total = 0
+                    with torch.no_grad():
+                        for bx, by in test_loader:
+                            bx, by = bx.to(device), by.to(device)
+                            out = model(bx)
+                            loss = criterion(out, by)
+                            val_loss += loss.item()
+                            
+                            _, predicted = torch.max(out.data, 1)
+                            total += by.size(0)
+                            correct += (predicted == by).sum().item()
+                    
+                    avg_val_loss = val_loss / len(test_loader)
+                    val_acc = correct / total
+                    fold_history['val_loss'].append(avg_val_loss)
+                    fold_history['val_acc'].append(val_acc)
+                    
+                    # 3. Step Schedule
+                    scheduler.step(avg_val_loss)
+                    
+                    # 4. Early Stopping Check
+                    if avg_val_loss < best_val_loss:
+                        best_val_loss = avg_val_loss
+                        best_model_wts = copy.deepcopy(model.state_dict())
+                        trigger_times = 0
+                    else:
+                        trigger_times += 1
+                        if trigger_times >= patience:
+                            break
+                            
+                # Load best model weights before predicting
+                model.load_state_dict(best_model_wts)
+                
+                history_all[fold_id] = fold_history
+
+                # Predict Final Probability for Fold
+                model.eval()
+                probs = []
+                with torch.no_grad():
+                    for bx, by in test_loader:
+                        bx = bx.to(device) # No label needed for predict
+                        out = model(bx)
+                        probs.append(torch.softmax(out, dim=1).cpu().numpy())
+                
+                y_test_all.append(y_test_fold)
+                y_prob_all.append(np.concatenate(probs))
+                groups_test_all.append(groups[test_idx])
+            
+            # Aggregate
+            y_test_final = np.concatenate(y_test_all)
+            y_prob_final = np.concatenate(y_prob_all)
+            groups_test_final = np.concatenate(groups_test_all)
+            
+            # Save History
+            joblib.dump(history_all, self.run_dir / "training_history.joblib")
+            
+            # Evaluate Aggregate Performance
+            evaluate_model(y_test_final, y_prob_final, display_labels, self.run_dir, subject_ids=groups_test_final)
+            
+            # Final Training on ALL Data
+            logger.info("Training final deep model on full dataset...")
+            means = X.mean(axis=(0, 2), keepdims=True)
+            stds = X.std(axis=(0, 2), keepdims=True) + 1e-6
+            X_norm = (X - means) / stds
+            
+            full_ds = TensorDataset(torch.tensor(X_norm, dtype=torch.float32), torch.tensor(y_mapped, dtype=torch.long))
+            full_loader = DataLoader(full_ds, batch_size=64, shuffle=True)
+            
+            final_model = Simple1DCNN(X.shape[1], len(unique_labels), X.shape[2]).to(device)
+            optimizer = optim.Adam(final_model.parameters(), lr=1e-3)
+            
+            for epoch in range(10):
+                final_model.train()
+                for bx, by in full_loader:
+                    bx, by = bx.to(device), by.to(device)
+                    optimizer.zero_grad()
+                    loss = nn.CrossEntropyLoss()(final_model(bx), by)
+                    loss.backward()
+                    optimizer.step()
+            
+            torch.save(final_model.state_dict(), self.run_dir / "model.pt")
+            joblib.dump({'mean': means, 'std': stds}, self.run_dir / "normalizer.joblib")
+            
+        else:
+            # Single Split Logic (Random)
+            train_idx, test_idx = self.get_split(groups)
+            groups_test = groups[test_idx]
+            
+            # Standardize inputs (Channel-wise)
+            # Compute mean/std on Train
+            X_train = X[train_idx]
+            X_test = X[test_idx]
+            
+            # (N, C, T) -> calculate scalar mean/std per channel over N, T
+            means = X_train.mean(axis=(0, 2), keepdims=True)
+            stds = X_train.std(axis=(0, 2), keepdims=True) + 1e-6
+            
+            X_train = (X_train - means) / stds
+            X_test = (X_test - means) / stds
+            
+            # Convert to Torch
+            train_dataset = TensorDataset(torch.tensor(X_train, dtype=torch.float32), torch.tensor(y_mapped[train_idx], dtype=torch.long))
+            test_dataset = TensorDataset(torch.tensor(X_test, dtype=torch.float32), torch.tensor(y_mapped[test_idx], dtype=torch.long))
+            
+            train_loader = DataLoader(train_dataset, batch_size=64, shuffle=True)
+            test_loader = DataLoader(test_dataset, batch_size=64, shuffle=False)
+            
+            # Model
+            num_channels = X.shape[1]
+            num_classes = len(unique_labels)
+            seq_len = X.shape[2]
+            
+            model = Simple1DCNN(num_channels, num_classes, seq_len).to(device)
+            criterion = nn.CrossEntropyLoss()
+            optimizer = optim.Adam(model.parameters(), lr=1e-3)
+            
+            logger.info("Training Deep Model (Single Split)...")
+            epochs = 10 # Short for MVP
+            for epoch in range(epochs):
+                model.train()
+                total_loss = 0
+                for bx, by in train_loader:
+                    bx, by = bx.to(device), by.to(device)
+                    optimizer.zero_grad()
+                    out = model(bx)
+                    loss = criterion(out, by)
+                    loss.backward()
+                    optimizer.step()
+                    total_loss += loss.item()
+                logger.info(f"Epoch {epoch+1}/{epochs}, Loss: {total_loss/len(train_loader):.4f}")
+                
+            # Eval
+            model.eval()
+            probs = []
+            trues = []
+            with torch.no_grad():
+                for bx, by in test_loader:
+                    bx = bx.to(device)
+                    out = model(bx) # Logits
+                    prob = torch.softmax(out, dim=1).cpu()
+                    probs.append(prob.numpy())
+                    trues.append(by.numpy())
+                    
+            y_probs = np.concatenate(probs)
+            y_trues = np.concatenate(trues)
+            
+            # Save artifacts
+            torch.save(model.state_dict(), self.run_dir / "model.pt")
+            normalizer = {'mean': means, 'std': stds}
+            joblib.dump(normalizer, self.run_dir / "normalizer.joblib")
+            
+            evaluate_model(y_trues, y_probs, display_labels, self.run_dir, subject_ids=groups_test)
+
         logger.info(f"Results saved to {self.run_dir}")
 
     def run(self):

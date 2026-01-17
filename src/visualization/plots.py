@@ -12,6 +12,7 @@ Functions:
     plot_sqi_analysis: Visualizes signal quality metrics.
 """
 
+import warnings
 import matplotlib.pyplot as plt
 import matplotlib as mpl
 import seaborn as sns
@@ -1339,3 +1340,247 @@ def plot_model_diagnostics(results_df: pd.DataFrame, save_folder: str = None):
     
     _save_plot(fig, "Model_Diagnostics_Panel", save_folder)
     return fig
+
+def plot_timeline_segmentation(df: pd.DataFrame, title: str = "Timeline Segmentation", save_folder: str = None):
+    """
+    Visualizes the timeline segmentation (Stress vs Baseline vs Excluded).
+    Useful for verifying data integrity and gap patterns.
+    
+    Args:
+        df: DataFrame containing "target" column (1=Stress, 0=Baseline), indexed by window ID.
+    """
+    set_plot_style()
+    
+    plt.figure(figsize=(15, 3))
+
+    max_idx = df.index.max()
+    full_timeline = np.arange(max_idx + 1)
+
+    # Create masks
+    is_stress = np.zeros(len(full_timeline))
+    is_baseline = np.zeros(len(full_timeline))
+
+    # WESAD Specific: target 1 is Stress, 0 is Baseline (remapped) or strict labels
+    stress_indices = df[df["target"] == 1].index
+    baseline_indices = df[df["target"] == 0].index
+
+    is_stress[stress_indices] = 1
+    is_baseline[baseline_indices] = 1
+    is_excluded = 1 - (is_stress + is_baseline)
+
+    # Plot
+    plt.fill_between(full_timeline, is_stress, step="mid", color="#FF8C00", alpha=0.9, label="Stress (Retained)")
+    plt.fill_between(full_timeline, is_baseline, step="mid", color="#4B0082", alpha=0.9, label="Baseline (Retained)")
+    plt.fill_between(full_timeline, is_excluded, step="mid", color="#4A4A4A", alpha=0.9, label="Excluded (Amusement / Artifact)")
+
+    plt.title(f"{title}: {len(df)} windows retained")
+    plt.xlabel("Original Window Index")
+    plt.yticks([])
+    plt.xlim(0, max_idx)
+    plt.legend(loc="upper right", ncol=3)
+    
+    _save_plot(plt.gcf(), title, save_folder)
+    return plt.gcf()
+
+
+def plot_multiscale_heatmap(
+    tensor_norm: np.ndarray, 
+    df: pd.DataFrame,
+    channels: List[str], 
+    title_prefix: str = "Feature Intensity",
+    save_folder: str = None
+):
+    """
+    Generates a Macro-View (entire session) and Micro-View (single window) heatmap.
+    
+    Args:
+        tensor_norm: Standardized Tensor (N, C, T)
+        df: DataFrame matching the tensor (for indices and labels)
+        channels: List of channel names
+    """
+    set_plot_style()
+    import matplotlib.patches as patches
+    
+    fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(15, 10), gridspec_kw={"height_ratios": [1, 1], "hspace": 0.4})
+
+    # --- Prepare Data ---
+    # Aggregate for Macro View (Mean over time dimension T)
+    # tensor_norm is (N, C, T) -> (N, C)
+    heatmap_matrix = tensor_norm.mean(axis=2)
+    viz_df = pd.DataFrame(heatmap_matrix, columns=channels, index=df.index)
+    
+    full_idx = np.arange(df.index.max() + 1)
+    viz_df_full = viz_df.reindex(full_idx) # Fill missing indices with NaN for gaps
+
+    # Define Colormap (Deep Purple -> White -> Dark Orange)
+    colors = ["#4B0082", "white", "#FF8C00"]
+    cmap = LinearSegmentedColormap.from_list("custom_purple_orange", colors)
+
+    # --- Plot 1: Macro View (Timeline) ---
+    sns.heatmap(
+        viz_df_full.T, 
+        cmap=cmap, 
+        center=0, 
+        robust=True, 
+        cbar_kws={"label": "Z-Score"},
+        xticklabels=100,
+        ax=ax1
+    )
+
+    # Highlight Gaps (NaNs) with a dark hatched pattern
+    ax1.set_facecolor("#303030") # Dark gray background
+    ax1.patch.set_hatch("//")    # Diagonal stripes
+    ax1.patch.set_edgecolor("#101010") 
+
+    ax1.set_title(f"Macro-View: {title_prefix} (Timeline)")
+    ax1.set_xlabel("Original Window Index (Hatched/Gray = Gaps/Excluded)")
+    ax1.set_ylabel("Channel")
+
+    # --- Plot 2: Micro View (Single Window Detail) ---
+    # Pick a representative Stress Window from the middle of the available stress set
+    stress_subset = df[df["target"] == 1]
+    if not stress_subset.empty:
+        zoom_idx_loc = len(stress_subset) // 2
+        original_idx = stress_subset.index[zoom_idx_loc]
+        # Find integer location in N dimension
+        # df.index.get_loc might return slice if duplicates, but valid_indices should be unique
+        # We need the index "i" such that df.iloc[i] corresponds to original_idx
+        # Simpler:
+        target_iloc = df.index.get_loc(original_idx)
+        if isinstance(target_iloc, slice): target_iloc = target_iloc.start # Safety
+        
+        window_data = tensor_norm[target_iloc]
+        
+        sns.heatmap(
+            window_data, 
+            cmap=cmap, 
+            center=0, 
+            robust=True,
+            cbar_kws={"label": "Z-Score"},
+            yticklabels=channels,
+            xticklabels=350, # Mark every 10 seconds (35Hz * 10)
+            ax=ax2
+        )
+        ax2.set_title(f"Micro-View: Detail of Window #{original_idx} (Stress)")
+        ax2.set_xlabel("Time Samples (0-2100 @ 35Hz)")
+
+        # Highlight the selected window on the Macro plot
+        rect = patches.Rectangle((original_idx, 0), width=5, height=len(channels), linewidth=2, edgecolor="#4A4A4A", facecolor="none")
+        ax1.add_patch(rect)
+        ax1.annotate("Zoomed Window", xy=(original_idx, len(channels)), xytext=(original_idx, len(channels)+1.5),
+                     arrowprops=dict(facecolor="#4A4A4A", shrink=0.05), color="#4A4A4A", ha="center", weight="bold")
+
+    else:
+        ax2.text(0.5, 0.5, "No Stress Windows Found", ha="center", va="center")
+
+    _save_plot(fig, title_prefix + "_Heatmap", save_folder)
+    return fig
+
+def plot_learning_curves(history: dict, save_folder: str = None):
+    """
+    Plots Training and Validation Loss/Accuracy curves aggregated across LOSO folds.
+    
+    Args:
+        history (dict): Dictionary where keys are 'Fold_X' and values are dicts with 'train_loss', 'val_loss', 'val_acc'.
+        save_folder (str): Folder to save output.
+    """
+    if not history:
+        print("No training history available to plot.")
+        return None
+
+    # Color Constants
+    DEEP_PURPLE = "#4B0082"
+    DARK_PURPLE = "#4B0082" # Standardizing name
+    DARK_ORANGE = "#FF8C00"
+
+    # Aggregate Data
+    train_losses_list = []
+    val_losses_list = []
+    val_accs_list = []
+    
+    max_epochs = 0
+    for fold_id, metrics in history.items():
+        t_loss = metrics['train_loss']
+        v_loss = metrics['val_loss']
+        v_acc = metrics['val_acc']
+        
+        train_losses_list.append(t_loss)
+        val_losses_list.append(v_loss)
+        val_accs_list.append(v_acc)
+        
+        max_epochs = max(max_epochs, len(t_loss))
+        
+    # Convert to Padding Arrays (Folds x Max_Epochs) with NaN
+    n_folds = len(train_losses_list)
+    
+    train_losses = np.full((n_folds, max_epochs), np.nan)
+    val_losses = np.full((n_folds, max_epochs), np.nan)
+    val_accs = np.full((n_folds, max_epochs), np.nan)
+    
+    for i in range(n_folds):
+        curr_len = len(train_losses_list[i])
+        train_losses[i, :curr_len] = train_losses_list[i]
+        val_losses[i, :curr_len] = val_losses_list[i]
+        val_accs[i, :curr_len] = val_accs_list[i]
+    
+    epochs = np.arange(1, max_epochs + 1)
+    
+    # Calculate Stats (Ignorning NaNs from early stopping)
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", category=RuntimeWarning)
+        train_mean = np.nanmean(train_losses, axis=0)
+        train_std = np.nanstd(train_losses, axis=0)
+        
+        val_mean = np.nanmean(val_losses, axis=0)
+        val_std = np.nanstd(val_losses, axis=0)
+        
+        acc_mean = np.nanmean(val_accs, axis=0)
+        acc_std = np.nanstd(val_accs, axis=0)
+    
+    # Plotting
+    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(16, 6))
+    
+    # 1. Loss Curve
+    # Plot Individual Folds (Thin Dashed)
+    for i in range(n_folds):
+        # We only plot validation loss of individual folds to show generalization gap
+        # Training loss variance is usually less interesting, but we can plot it very faintly if needed.
+        # Let's stick to user request: "curves of each indivisual subject"
+        # We'll plot both Train and Val for individuals but extremely thin
+        ax1.plot(epochs, train_losses[i], color=DARK_PURPLE, alpha=0.4, linewidth=0.8, linestyle='-')
+        ax1.plot(epochs, val_losses[i], color=DARK_ORANGE, alpha=0.4, linewidth=0.8, linestyle='-')
+
+    # Training Mean
+    ax1.plot(epochs, train_mean, label='Training Loss', color=DARK_PURPLE, linewidth=2.5) # Thicker solid
+    
+    # Validation Mean
+    ax1.plot(epochs, val_mean, label='Validation Loss', color=DARK_ORANGE, linewidth=2.5, linestyle='-') # Thicker solid (changed from dashed)
+    
+    ax1.set_title("Learning Dynamics (Loss)", fontsize=16) # Removed Bold
+    ax1.set_xlabel("Epochs")
+    ax1.set_ylabel("Cross Entropy Loss")
+    ax1.legend()
+    ax1.grid(True, alpha=0.3)
+    
+    # 2. Accuracy Curve
+    # Plot Individual Folds
+    for i in range(n_folds):
+         ax2.plot(epochs, val_accs[i], color=DARK_ORANGE, alpha=0.4, linewidth=0.8, linestyle='-')
+
+    ax2.plot(epochs, acc_mean, label='Validation Accuracy', color=DARK_ORANGE, linewidth=2.5) # Thicker solid
+    
+    ax2.set_title("Generalization (Validation Accuracy)", fontsize=16) # Removed Bold
+    ax2.set_xlabel("Epochs")
+    ax2.set_ylabel("Accuracy")
+    ax2.set_ylim(0.4, 1.0) # Focus on relevant range
+    ax2.axhline(0.5, color='gray', linestyle=':', linewidth=2, label='Random Guess')
+    ax2.legend()
+    ax2.grid(True, alpha=0.3)
+    
+    plt.tight_layout()
+    
+    if save_folder:
+        _save_plot(fig, "learning_curves", save_folder)
+        
+    return fig
+

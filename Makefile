@@ -1,7 +1,15 @@
-.PHONY: setup download preprocess train test lint run-api clean
+.PHONY: setup setup-gpu download preprocess train test lint run-api clean
 
 setup:
 	pip install -e .[dev]
+
+setup-gpu:
+	@echo "Installing Production Dependencies..."
+	pip install -e .[dev]
+	@echo "Overwriting PyTorch with CUDA 12.4 enabled version..."
+	pip uninstall -y torch torchvision torchaudio
+	pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu124
+
 
 download:
 	# Expects the WESAD.zip to be in data/ or user has to put it there manually as we can't automate login-walled downloads easily without credentials
