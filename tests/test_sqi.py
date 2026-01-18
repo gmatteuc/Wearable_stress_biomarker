@@ -1,3 +1,11 @@
+"""
+Signal Quality Index (SQI) Tests
+================================
+
+Unit tests for the SQI module. Verifies that flatlines and noise are correctly
+flagged and that the composite quality score is robust.
+"""
+
 import pytest
 import numpy as np
 from src.features.sqi import SignalQualityIndex

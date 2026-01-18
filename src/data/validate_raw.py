@@ -1,8 +1,3 @@
-import os
-import zipfile
-from pathlib import Path
-import logging
-
 """
 Raw Data Validation Script
 ==========================
@@ -11,6 +6,11 @@ This script ensures the WESAD dataset is correctly downloaded and extracted.
 It checks for the presence of specific subject folders and handles the
 unzipping process if necessary.
 """
+
+import os
+import zipfile
+from pathlib import Path
+import logging
 
 from src.config import load_config, PROJECT_ROOT
 

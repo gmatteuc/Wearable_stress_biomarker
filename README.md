@@ -7,7 +7,7 @@
 - **Deep Learning**: ResNet-1D architecture optimized for physiological time-series (CHEST modality).
 - **Explainability**: Instance Normalization visualization to audit model inputs.
 - **REST API**: FastAPI implementation for real-time stress prediction (`src/api/app.py`).
-- **MLOps**: Automated Concept Drift detection to monitor population shifts (`src/monitoring/drift_report.py`).
+- **MLOps**: Automated Data Drift detection (Covariate Shift) to monitor population shifts (`src/monitoring/drift_report.py`).
 - **Reproducibility**: End-to-end consistency between Training and Inference logic.
 
 ## Overview
@@ -98,6 +98,11 @@ docker run -p 8000:8000 outcomes/stress-detection
 
 ### Monitoring
 Check for data drift between training reference and new batch:
+```bash
+# Example python script usage (if applicable) or refer to Notebook 05
+python -m src.monitoring.drift_report --ref data/processed/train.parquet --curr data/processed/batch_01.parquet
+```
+See `notebooks/05_inference_demo.ipynb` for the interactive Drift Dashboard.
 ```bash
 python -m src.monitoring.drift_report --reference data/processed/features.parquet --current data/new_batch.parquet
 ```

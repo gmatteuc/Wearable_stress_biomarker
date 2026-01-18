@@ -1,8 +1,3 @@
-import pandas as pd
-from pathlib import Path
-import joblib
-import logging
-
 """
 Feature Engineering Script
 ==========================
@@ -11,6 +6,11 @@ This script orchestrates the Feature Extraction process. It loads processed
 windowed data (Parquet), applies the FeatureExtractor, and saves the
 resulting feature matrix for model training.
 """
+
+import pandas as pd
+from pathlib import Path
+import joblib
+import logging
 
 from src.config import load_config, PROJECT_ROOT
 from src.features.feature_extraction import FeatureExtractor

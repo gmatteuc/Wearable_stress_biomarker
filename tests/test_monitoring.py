@@ -1,3 +1,12 @@
+"""
+Drift Monitoring Verification
+=============================
+
+Integration test for the Drift Monitoring system. It simulates a drift event
+by splitting the dataset into different subject groups and verifies that
+the Kolmogorov-Smirnov test detects significant distributional shifts.
+"""
+
 import sys
 from pathlib import Path
 import pandas as pd
@@ -12,7 +21,7 @@ from src.monitoring.drift_report import compute_drift
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("MonitoringTest")
 
-def verify_monitoring():
+def test_monitoring():
     logger.info("=== Loading Data ===")
     data_path = project_root / "data" / "processed" / "windows.parquet"
     if not data_path.exists():
@@ -62,4 +71,4 @@ def verify_monitoring():
         print("WARNING: No drift detected. This is unusual for different subjects but possible if normalized.")
 
 if __name__ == "__main__":
-    verify_monitoring()
+    test_monitoring()

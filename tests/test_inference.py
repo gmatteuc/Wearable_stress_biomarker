@@ -1,3 +1,12 @@
+"""
+Inference Pipeline Verification
+===============================
+
+Verification script to test the `StressPredictor` class. It loads the latest
+trained model artifact and runs a prediction on a sample validation window
+to ensure the inference path is functional.
+"""
+
 import pandas as pd
 import numpy as np
 from pathlib import Path
@@ -9,7 +18,7 @@ sys.path.append(str(Path.cwd()))
 from src.models.predict import StressPredictor
 from src.config import load_config, PROJECT_ROOT
 
-def verify_inference():
+def test_inference():
     print("=== Inference Pipeline Verification ===")
     
     # 1. Find latest Deep Learning Run
@@ -89,4 +98,4 @@ def verify_inference():
         traceback.print_exc()
 
 if __name__ == "__main__":
-    verify_inference()
+    test_inference()

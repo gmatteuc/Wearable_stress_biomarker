@@ -40,6 +40,12 @@ lint:
 run-api:
 	uvicorn src.api.app:app --host 0.0.0.0 --port 8000 --reload
 
+docker-build:
+	docker build -t outcomes/stress-detection .
+
+docker-run:
+	docker run -p 8000:8000 outcomes/stress-detection
+
 clean:
 	rm -rf build dist *.egg-info
 	find . -type d -name __pycache__ -exec rm -rf {} +

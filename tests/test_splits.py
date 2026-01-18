@@ -1,3 +1,11 @@
+"""
+Data Split Validation Tests
+===========================
+
+Unit tests to ensure data splitting logic (Leave-One-Subject-Out) works correctly
+and prevents data leakage between training and testing sets.
+"""
+
 import pytest
 import numpy as np
 from src.models.train import Trainer

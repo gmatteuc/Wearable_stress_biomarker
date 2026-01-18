@@ -1,3 +1,12 @@
+"""
+API Client Verification
+=======================
+
+Integration test for the FastAPI application. Uses `TestClient` to simulate
+HTTP requests against the API endpoints (`/health`, `/predict`) using 
+real data loaded from the project.
+"""
+
 import pandas as pd
 import numpy as np
 import sys

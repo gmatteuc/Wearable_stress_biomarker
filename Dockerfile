@@ -8,13 +8,16 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 COPY pyproject.toml .
-# Create dummy file to setup dependencies
+
+# 1. Copy core source and configs first to cache dependencies
 COPY src/ /app/src/
 COPY configs/ /app/configs/
-# Install dependencies
-RUN pip install .
 
-# Copy source code and artifacts
+# 2. Install dependencies (including the project itself in editable mode or standard)
+RUN pip install --no-cache-dir .
+
+# 3. Copy the rest of the project (Crucially: 'reports/' containing trained models)
+# Note: Data and Notebooks are excluded via .dockerignore
 COPY . .
 
 # Expose port

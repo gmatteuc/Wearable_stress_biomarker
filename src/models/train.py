@@ -1,23 +1,3 @@
-import argparse
-import copy
-import pandas as pd
-import numpy as np
-import yaml
-import joblib
-import json
-from pathlib import Path
-from sklearn.model_selection import GroupKFold, train_test_split
-from sklearn.linear_model import LogisticRegression
-from sklearn.ensemble import GradientBoostingClassifier
-from sklearn.preprocessing import StandardScaler
-from sklearn.pipeline import Pipeline
-from sklearn.calibration import CalibratedClassifierCV
-import torch
-from torch.utils.data import DataLoader, TensorDataset
-import torch.optim as optim
-import torch.nn as nn
-import logging
-
 """
 Model Training Pipeline
 =======================
@@ -27,7 +7,15 @@ models. It handles data loading, splitting (including LOSO), training loops,
 and artifact saving (models, scalers, metrics).
 """
 
-from src.config import load_config, PROJECT_ROOT
+import argparse
+import copy
+import pandas as pd
+import numpy as np
+import yaml
+import joblib
+import json
+from pathlib import Path
+from sklearn.model_selection import GroupKFold, train_test_split
 from src.features.feature_extraction import FeatureExtractor
 from src.models.deep import ResNet1D
 from src.models.evaluate import evaluate_model
