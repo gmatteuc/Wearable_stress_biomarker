@@ -10,53 +10,68 @@ The system processes raw biosignals (ECG, EDA, Respiration, Temperature, Acceler
 **Use Case Scenario:**
 *Consider an occupational safety system for high-stakes professions (e.g., pilots, first responders). The goal is to monitor physiological stress benchmarks in real-time, flagging cognitive overload before performance degrades or safety `is compromised. This requires not just high accuracy, but robust generalization to new users and explainable reliability metrics.*
 
-**Key Value Points:**
-1.  **Rigorous Validation**: Implements **Leave-One-Subject-Out (LOSO)** cross-validation to ensure the model generalizes to unseen individuals (preventing the "identity leakage" common in amateur biomedical AI).
-2.  **Deep Learning Architecture**: A custom **ResNet-1D** with Squeeze-and-Excitation blocks to learn morphological features directly from raw time-series, outperforming traditional feature engineering.
+**Key Engineering Value:**
+1.  **Rigorous Validation**: Implements **Leave-One-Subject-Out (LOSO)** cross-validation. This ensures the model generalizes to *unseen* individuals, preventing the "identity leakage" common in amateur biomedical AI.
+2.  **Deep Representation Learning**: A custom **ResNet-1D** with Squeeze-and-Excitation blocks learns morphological features directly from raw time-series, eliminating the need for brittle manual feature engineering.
 3.  **Full MLOps Lifecycle**: Includes data versioning, Signal Quality Indices (SQI), Model Drift detection, and a FastAPI deployment endpoint.
 
-Created by [Your Name] in 2026.
+Created by Giulio Matteucci in 2026.
 
-> **Development Note**: The current pipeline is fully validated and tested on the **CHEST** sensor modality (High-fidelity ECG, Chest EDA). The infrastructure currently supports the **WRIST** modality (PPG/BVP), but specific validation benchmarks and hyperparameter tuning for wrist-based signals are currently in development.
+> **Development Note**: The current pipeline is fully validated and tested on the **CHEST** sensor modality (High-fidelity ECG, Chest EDA). The infrastructure currently supports the **WRIST** modality (PPG/BVP), but specific validation benchmarks for wrist-based signals are currently in development.
 
 ## Dataset
-The project utilizes the **WESAD (Wearable Stress and Affect Detection)** dataset.
-- **Subjects**: 15 participants in a controlled lab study.
-- **Signals**: 
-  - **Chest**: ECG (700Hz), EDA, EMG, Respiration, Temperature, Accelerometer.
-  - **Wrist**: BVP (64Hz), EDA, Skin Temperature.
-- **Context**: Three affective states: Neutral (Baseline), Stress (TSST protocol), Amusement.
+The project utilizes the **WESAD (Wearable Stress and Affect Detection)** dataset (N=15).
+- **Signals Used**: ECG (700Hz), EDA, Respiration, Temperature, Accelerometer (3-axis).
+- **Preprocessing**: All signals are resampled to 35Hz, aligned, and segmented into 60s sliding windows with 50% overlap.
 
 ## Methodology
 
-### 1. Preprocessing & Signal Quality
-Raw sensor streams are messy. The pipeline implements:
-- **Resampling**: Harmonizing all signals to 35Hz for deep learning ingestion.
-- **Windowing**: Sliding vectors of 60 seconds with 50% overlap.
-- **Signal Visualization**: Automated generation of signal snapshots to verify integrity.
+### 1. From Raw Signals to Deep Features
+Instead of manually calculating 100+ statistical features (mean, HRV, peak-counts), we feed the raw multi-channel signal tensor `(Batch, 7, 2100)` into a Deep Residual Network.
 
-<img src="misc/Subject_S2_-_Raw_Chest_Signals_60s_snapshot_example.png" width="600">
-*Example of a 60-second window of raw physiological signals from the Chest sensor.*
+<div align="center">
+  <img src="misc/Subject_S2_-_Raw_Chest_Signals_60s_snapshot_example.png" width="80%">
+  <p><em>Raw 60s Input Window (noisy, multi-modal).</em></p>
+  <br>
+  <img src="misc/Features_Heatmap_example.png" width="80%">
+  <p><em>Visualization of the Multi-scale Normalized Tensor inputs (what the network sees).</em></p>
+</div>
+<br>
+
+* **Top**: Raw multi-channel signals (ECG, EDA, Resp) prior to normalization.
+* **Bottom**: The **Normalized Input Tensor** fed to the CNN. The top half shows Global Normalization (preserving signal magnitude), while the bottom half shows Instance Normalization (highlighting local shape morphology).
 
 ### 2. Machine Learning Modeling
 Two modeling approaches were compared to establish a robust benchmark:
-- **Baseline (Classical ML)**: Logistic Regression on statistically engineered features (Mean, Std, Peaks, Dynamic Range).
-- **Deep Learning (ResNet-1D)**: A 1D Convolutional Neural Network that learns representations directly from the raw `(Channels x Time)` tensor.
+- **Baseline (Classical ML)**: Logistic Regression on statistically engineered features.
+- **Deep Learning (ResNet-1D)**: A 4-stage 1D-CNN with Squeeze-and-Excitation blocks.
 
-### 3. Evaluation Strategy
-We strictly adhere to a **Leave-One-Subject-Out (LOSO)** protocol. If we randomly split windows, the model would learn the subject's unique heart rate, not "stress". LOSO ensures we test on a person the model has never seen before.
+## Key Findings & Performance
 
-### 4. MLOps & Deployment
-- **FastAPI**: A robust REST API for real-time inference.
-- **Drift Monitoring**: Statistical tests (Kolmogorov-Smirnov) to detect when incoming data deviates from the training distribution (Covariate Shift).
+The Deep Learning approach demonstrates **superior performance** and robustness compared to the classical baseline.
 
-## Key Findings
-- **Performance**: The Deep Learning approach significantly outperforms the classical baseline (Acc **~96%** vs **~86%**).
-- **Why?**: The CNN captures complex local morphologies (e.g., the specific slope of an EDA reaction or R-peak interval variability) that global statistical aggregations miss.
-- **Reliability**: We analyze prediction confidence histograms to identify "ambiguous" zones where the model should abstain from predicting.
+| Metric | Baseline (Logistic) | Deep Model (ResNet-1D) |
+| :--- | :---: | :---: |
+| **Accuracy** | ~86% | **~96%** |
+| **ROC AUC** | 0.90 | **0.99** |
+| **Inference Time** | <1ms | ~15ms |
 
-<img src="misc/deep_Confidence_Abstention_example.png" width="800">
-*Reliability Audit: Analyzing model confidence and calibration to prevent silent failures.*
+### Diagnostic Audit
+The Confusion Matrix below confirms that the model is highly effective at distinguishing **Stress** (Class 1) from **Baseline** (Class 0), with minimal False Negatives—crucial for a safety monitoring system.
+
+<div align="center">
+  <img src="misc/Deep_Model_Diagnostics_example.png" width="80%">
+  <p><em>Global Performance Panel: The near-perfect ROC curve (Top Right) and diagonal Confusion Matrix (Left) validate the model's discriminative power using rigorous LOSO cross-validation.</em></p>
+</div>
+
+### Reliability & Explainability
+High accuracy is not enough for deployment; we must know *when* the model is unsure. We implemented a confidence-based abstention mechanism.
+
+<div align="center">
+  <img src="misc/deep_Confidence_Abstention_example.png" width="80%">
+  <p><em>Reliability Audit: The histogram (top right) shows the model pushes most predictions to high confidence (0.9-1.0), indicating decisive classification.</em></p>
+</div>
+
 
 ## 💻 Project Structure
 ```
@@ -68,12 +83,11 @@ We strictly adhere to a **Leave-One-Subject-Out (LOSO)** protocol. If we randoml
 │   └── 05_inference_demo.ipynb
 ├── reports/            # Training artifacts (Models, Logs, Plots)
 ├── src/
-│   ├── api/            # FastAPI application
+│   ├── api/            # FastAPI deployment
 │   ├── data/           # ETL & Validation logic
 │   ├── features/       # SQI & Feature Extraction
 │   ├── models/         # PyTorch (ResNet) & Scikit-Learn logic
 │   └── monitoring/     # Drift detection modules
-├── tests/              # Unit tests
 ├── Dockerfile          # Container definition
 ├── Makefile            # Automation
 └── README.md           # Documentation
@@ -105,11 +119,9 @@ We strictly adhere to a **Leave-One-Subject-Out (LOSO)** protocol. If we randoml
    ```bash
    make run-api
    ```
-   Access the Swagger UI at `http://localhost:8000/docs`.
 
 ## Dependencies
 - **Core**: `pandas`, `numpy`, `scipy`
 - **Deep Learning**: `torch`, `torchvision` (1D ResNet adaptation)
 - **ML**: `scikit-learn`, `joblib`
 - **Deployment**: `fastapi`, `uvicorn`, `docker`
-- **Visualization**: `matplotlib`, `seaborn`
