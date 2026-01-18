@@ -8,6 +8,7 @@ inference batches against the training reference using statistical tests
 """
 
 import pandas as pd
+import numpy as np
 import argparse
 from pathlib import Path
 from scipy.stats import ks_2samp
@@ -18,24 +19,72 @@ from src.utils.logger import get_logger
 
 logger = get_logger(__name__)
 
-def compute_drift(reference_file: Path, current_file: Path, output_file: Path):
-    logger.info(f"Loading reference: {reference_file}")
-    df_ref = pd.read_parquet(reference_file)
-    logger.info(f"Loading current: {current_file}")
-    df_curr = pd.read_parquet(current_file)
+
+def extract_monitoring_features(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Extracts scalar features from signal windows for monitoring.
+    For array columns, calculates Mean and Std.
+    """
+    monitor_df = pd.DataFrame(index=df.index)
     
-    # Identify feature columns (numeric)
-    feature_cols = [c for c in df_ref.columns if c not in ['subject_id', 'label'] and pd.api.types.is_numeric_dtype(df_ref[c])]
+    for col in df.columns:
+        if col in ['subject_id', 'label', 'label_str']:
+            continue
+            
+        # Check if column contains arrays/lists
+        if isinstance(df[col].iloc[0], (list, np.ndarray)):
+            # Calculate simple stats for monitoring distribution
+            # stack values to 2D array if possible for speed, else apply
+            try:
+                # Attempt fast vectorization
+                matrix = np.stack(df[col].values)
+                monitor_df[f'{col}_mean'] = matrix.mean(axis=1)
+                monitor_df[f'{col}_std'] = matrix.std(axis=1)
+            except:
+                # Fallback
+                monitor_df[f'{col}_mean'] = df[col].apply(np.mean)
+                monitor_df[f'{col}_std'] = df[col].apply(np.std)
+        elif pd.api.types.is_numeric_dtype(df[col]):
+            monitor_df[col] = df[col]
+            
+    return monitor_df
+
+def compute_drift(reference_data, current_data):
+    """
+    Calculates KS-statistic for features between reference and current batches.
+    Args:
+        reference_data: DataFrame or Path to parquet
+        current_data: DataFrame or Path to parquet
+    """
+    # Load Data if Paths
+    if isinstance(reference_data, (str, Path)):
+        df_ref = pd.read_parquet(reference_data)
+    else:
+        df_ref = reference_data.copy()
+        
+    if isinstance(current_data, (str, Path)):
+        df_curr = pd.read_parquet(current_data)
+    else:
+        df_curr = current_data.copy()
+    
+    # Extract Scalar Features for Monitoring
+    logger.info("Extracting monitoring features...")
+    df_ref_scalar = extract_monitoring_features(df_ref)
+    df_curr_scalar = extract_monitoring_features(df_curr)
     
     drift_report = {}
     alert_count = 0
     
+    # Compare Distributions
+    feature_cols = df_ref_scalar.columns
+    
     for col in feature_cols:
-        if col not in df_curr.columns:
+        if col not in df_curr_scalar.columns:
             continue
             
         # Kolmogorov-Smirnov test
-        stat, p_value = ks_2samp(df_ref[col], df_curr[col])
+        # Null Hypothesis: distributions are the same
+        stat, p_value = ks_2samp(df_ref_scalar[col], df_curr_scalar[col])
         
         drift_detected = p_value < 0.05
         if drift_detected:
@@ -45,9 +94,11 @@ def compute_drift(reference_file: Path, current_file: Path, output_file: Path):
             'ks_stat': float(stat),
             'p_value': float(p_value),
             'drift_detected': drift_detected,
-            'mean_ref': float(df_ref[col].mean()),
-            'mean_curr': float(df_curr[col].mean())
+            'mean_ref': float(df_ref_scalar[col].mean()),
+            'mean_curr': float(df_curr_scalar[col].mean())
         }
+    
+    return drift_report
         
     logger.info(f"Drift detection complete. {alert_count} features showed significant drift.")
     

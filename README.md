@@ -1,5 +1,15 @@
 # Wearable Stress Detection with Quality-Aware MLOps
 
+## Project Status
+**Active Development** - Phase: MLOps & Deployment (CHEST Modality)
+
+## Key Features
+- **Deep Learning**: ResNet-1D architecture optimized for physiological time-series (CHEST modality).
+- **Explainability**: Instance Normalization visualization to audit model inputs.
+- **REST API**: FastAPI implementation for real-time stress prediction (`src/api/app.py`).
+- **MLOps**: Automated Concept Drift detection to monitor population shifts (`src/monitoring/drift_report.py`).
+- **Reproducibility**: End-to-end consistency between Training and Inference logic.
+
 ## Overview
 This project demonstrates a production-grade Machine Learning Engineering pipeline for detecting stress using multi-sensor wearable data (WESAD dataset). 
 

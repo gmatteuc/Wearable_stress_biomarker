@@ -321,3 +321,26 @@ otebooks/04_deep_learning_verification.ipynb)**:
  # # #   C u r r e n t   S t a t e  
  T h e   p i p e l i n e   i s   n o w   f u l l y   c o n s i s t e n t .   T h e   ` S t r e s s P r e d i c t o r `   c l a s s   i s   r o b u s t   a n d   r e a d y   f o r   A P I   d e p l o y m e n t .  
  
+## 7. API Deployment & Verification (Jan 18, 2026)
+- [x] **FastAPI Implementation**:
+    - Created src/api/app.py exposing a minimal /predict endpoint.
+    - **Type Handling Fix**: Resolved a critical bug where Pydantic's List[float] inputs were not being correctly cast to NumPy arrays before ingestion by StressPredictor. 
+    - The API now reconstructs the DataFrame in the exact (Length, Channels) structure expected by the predictor's Instance Normalization logic.
+- [x] **Verification**:
+    - **Test Script**: Created 	ests/verify_api_client.py using astapi.testclient to simulate HTTP requests and validate response structure (Success).
+    - **Notebook Integration**: Added a verification cell to 
+otebooks/05_inference_demo.ipynb demonstrating how to invoke the API using sample data.
+
+## 8. MLOps Monitoring Demo (Jan 18, 2026)
+- [x] **Drift Monitoring Module**:
+    - Updated src/monitoring/drift_report.py to handle array-based features (Vectorized extraction of Mean/Std from raw signal windows).
+    - Designed specifically to detect **Inter-Subject Variability** (New User Drift).
+- [x] **Visualization Refactor**:
+    - Moved drift visualization logic from notebook to src/visualization/plots.py (isualize_drift) to maintain clean portfolio code.
+- [x] **End-to-End Demo**:
+    - Finalized 
+otebooks/05_inference_demo.ipynb which now covers: Inference -> API Verification -> Drift Monitoring.
+
+## Next Steps
+- [ ] Containerization (Docker) verification.
+- [ ] Integration of wrist-based (WESAD-RespiBAN) modality.

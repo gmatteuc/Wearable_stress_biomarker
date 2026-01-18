@@ -1776,3 +1776,115 @@ def visualize_inference(window_row: pd.Series, predictor, save_folder: str = Non
         _save_plot(fig, fname, save_folder)
     
     return fig
+
+def visualize_drift(drift_report: Dict[str, Any], df_ref: pd.DataFrame, df_curr: pd.DataFrame) -> pd.DataFrame:
+    """
+    Visualizes concept/data drift monitoring results.
+    1. Summarizes drifted features.
+    2. Plots KDE comparison for the Top 9 most significant drifts (Mosaic View).
+    
+    Args:
+        drift_report (dict): Output from src.monitoring.drift_report.compute_drift
+        df_ref (pd.DataFrame): Reference batch dataframe
+        df_curr (pd.DataFrame): Current batch dataframe
+        
+    Returns:
+        pd.DataFrame: Summary table of drift statistics sorted by p-value.
+    """
+    
+    # 1. Parse Report
+    drift_data = []
+    for feature, stats in drift_report.items():
+        drift_data.append({
+            'Feature': feature,
+            'P-Value': stats['p_value'],
+            'Drift Detected': stats['drift_detected'],
+            'Ref Mean': stats['mean_ref'],
+            'Cur Mean': stats['mean_curr']
+        })
+
+    drift_df = pd.DataFrame(drift_data).sort_values('P-Value')
+    
+    # 2. Print Summary (Useful for notebook logs)
+    n_drifted = drift_df['Drift Detected'].sum()
+    total = len(drift_df)
+    
+    msg = f"Drift Report: {n_drifted}/{total} features showed significant distributional shift (p<0.05)."
+    print(f"--- {msg} ---")
+
+    # 3. Visualization (Mosaic of ALL Features)
+    # User requested 3x5 tiling for all features (approx 15)
+    features_to_plot = drift_df
+    n_plots = len(features_to_plot)
+    
+    if n_plots > 0:
+        # Calculate Grid Dimensions (Fixed 3 columns)
+        cols = 3
+        rows = (n_plots + cols - 1) // cols
+        
+        fig, axes = plt.subplots(rows, cols, figsize=(15, 3.5 * rows))
+        if n_plots == 1:
+            axes = [axes] # Make iterable
+        else:
+            axes = axes.flatten()
+            
+        # Helper to get scalar values
+        def extract_col_values(df, col_name):
+            base_col = col_name.replace('_mean', '').replace('_std', '')
+            try:
+                if base_col in df.columns:
+                     sample_val = df[base_col].iloc[0]
+                     if isinstance(sample_val, (list, np.ndarray)):
+                        # It's an array column -> Aggregate
+                        func = np.mean if 'mean' in col_name else np.std
+                        return df[base_col].apply(func)
+                     else:
+                        return df[base_col]
+                elif col_name in df.columns:
+                     return df[col_name]
+            except Exception:
+                return pd.Series([0]*len(df)) # Fallback
+            return pd.Series([0]*len(df))
+
+        # Plot loop
+        for idx, (index, row) in enumerate(features_to_plot.iterrows()):
+            ax = axes[idx]
+            feature = row['Feature']
+            p_val = row['P-Value']
+            is_drifted = row['Drift Detected']
+            
+            s_ref = extract_col_values(df_ref, feature)
+            s_curr = extract_col_values(df_curr, feature)
+            
+            plot_df = pd.concat([
+                pd.DataFrame({'Value': s_ref, 'Batch': 'Reference'}),
+                pd.DataFrame({'Value': s_curr, 'Batch': 'Current'})
+            ])
+            
+            # Main KDE
+            sns.kdeplot(data=plot_df, x='Value', hue='Batch', fill=True, common_norm=False, 
+                        palette=["#4B0082", "#FF8C00"], ax=ax, legend=(idx==0))
+            
+            # Styling: Black title for Drift, Gray for No Drift
+            title_color = 'black' if is_drifted else 'gray'
+            # Bold title if drifted, normal if not
+            font_weight = 'bold' if is_drifted else 'normal'
+            
+            ax.set_title(f"{feature}\n(p={p_val:.1e})", fontsize=10, fontweight=font_weight, color=title_color)
+            ax.set_xlabel("")
+            ax.set_ylabel("Density" if idx % cols == 0 else "")
+            
+            # Metrics text overlay
+            txt = f"Ref: {row['Ref Mean']:.2f}\nCur: {row['Cur Mean']:.2f}" 
+            # Use appropriate text color based on background? KDE background is white.
+            ax.text(0.95, 0.95, txt, transform=ax.transAxes, ha='right', va='top', fontsize=8,
+                    bbox=dict(boxstyle="round,pad=0.2", fc="white", alpha=0.9))
+
+        # Hide unused axes
+        for i in range(idx + 1, len(axes)):
+            axes[i].axis('off')
+
+        plt.suptitle(f"MLOps Monitor: Distribution Shift Analysis ({n_plots} Features)", fontsize=14, y=1.00 + (0.01*rows))
+        plt.tight_layout()
+        
+    return drift_df
