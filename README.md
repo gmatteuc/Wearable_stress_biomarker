@@ -8,7 +8,7 @@ This project implements an end-to-end "Engineering Grade" Machine Learning pipel
 The system processes raw biosignals (ECG, EDA, Respiration, Temperature, Accelerometry) to classify the user's state as **Baseline** or **Stress** in real-time.
 
 **Use Case Scenario:**
-*Consider an occupational safety system for high-stakes professions (e.g., pilots, first responders). The goal is to monitor physiological stress benchmarks in real-time, flagging cognitive overload before performance degrades or safety `is compromised. This requires not just high accuracy, but robust generalization to new users and explainable reliability metrics.*
+*Consider an occupational safety system for high-stakes professions (e.g., pilots, first responders). The goal is to monitor physiological stress benchmarks in real-time, flagging cognitive overload before performance degrades or safety is compromised.*
 
 **Key Engineering Value:**
 1.  **Rigorous Validation**: Implements **Leave-One-Subject-Out (LOSO)** cross-validation. This ensures the model generalizes to *unseen* individuals, preventing the "identity leakage" common in amateur biomedical AI.
@@ -57,7 +57,7 @@ The Deep Learning approach demonstrates **superior performance** and robustness 
 | **Inference Time** | <1ms | ~15ms |
 
 ### Diagnostic Audit
-The Confusion Matrix below confirms that the model is highly effective at distinguishing **Stress** (Class 1) from **Baseline** (Class 0), with minimal False Negatives—crucial for a safety monitoring system.
+The Confusion Matrix below confirms that the model is highly effective at distinguishing **Stress** (Class 1) from **Baseline** (Class 0), with minimal False Negatives (crucial for a safety monitoring system).
 
 <div align="center">
   <img src="misc/Deep_Model_Diagnostics_example.png" width="80%">
@@ -96,9 +96,14 @@ High accuracy is not enough for deployment; we must know *when* the model is uns
 ## ⚙️ Installation & Usage
 
 1. **Environment Setup**:
-   The project uses `conda` and `pip` via a Makefile for reproducible setup.
+   The project provides a Makefile for comprehensive setup, or a standard Conda environment file.
    ```bash
    make setup
+   ```
+   *Alternatively (Conda)*:
+   ```bash
+   conda env create -f environment.yml
+   conda activate wearable_stress
    ```
 
 2. **Data Pipeline**:

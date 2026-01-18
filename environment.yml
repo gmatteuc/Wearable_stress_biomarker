@@ -1,0 +1,26 @@
+name: wearable_stress
+channels:
+  - pytorch
+  - defaults
+dependencies:
+  - python>=3.9
+  - pip
+  - pip:
+      - numpy>=1.21.0
+      - pandas>=1.3.0
+      - scipy>=1.7.0
+      - scikit-learn>=1.0.0
+      - torch>=1.10.0
+      - matplotlib>=3.4.0
+      - seaborn>=0.11.0
+      - pyyaml>=6.0
+      - fastapi>=0.70.0
+      - uvicorn>=0.15.0
+      - python-multipart
+      - joblib>=1.1.0
+      - pyarrow>=14.0.0
+      - jupyter
+      - notebook
+      - pytest
+      # Install the project itself in editable mode
+      - -e .
