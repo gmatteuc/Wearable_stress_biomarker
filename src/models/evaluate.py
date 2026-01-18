@@ -78,31 +78,9 @@ def evaluate_model(y_true, y_prob, labels, output_dir: Path, subject_ids=None):
     results_df = pd.DataFrame(results)
     results_df.to_csv(output_dir / "predictions.csv", index=False)
         
-    # 2. Confusion Matrix
-    cm = confusion_matrix(y_true, y_pred)
-    plt.figure(figsize=(8, 6))
-    sns.heatmap(cm, annot=True, fmt='d', xticklabels=labels, yticklabels=labels, cmap='Blues')
-    plt.title('Confusion Matrix')
-    plt.ylabel('True Label')
-    plt.xlabel('Predicted Label')
-    plt.savefig(output_dir / "confusion_matrix.png")
-    plt.close()
-    
-    # 3. Reliability Diagram (Top-class calibration)
-    # Simple binary-like plot for "Correctness"
-    confidences = np.max(y_prob, axis=1)
-    is_correct = (y_pred == y_true).astype(int)
-    
-    prob_true, prob_pred = calibration_curve(is_correct, confidences, n_bins=10, strategy='uniform')
-    
-    plt.figure(figsize=(6, 6))
-    plt.plot(prob_pred, prob_true, marker='o', label='Model')
-    plt.plot([0, 1], [0, 1], linestyle='--', label='Perfectly Calibrated')
-    plt.xlabel('Mean Predicted Probability (Confidence)')
-    plt.ylabel('Fraction of Positives (Accuracy)')
-    plt.title(f'Reliability Diagram (ECE={ece:.4f})')
-    plt.legend()
-    plt.savefig(output_dir / "calibration_plot.png")
-    plt.close()
+    # 2. Confusion Matrix & Reliability Diagram
+    # Removed redundant standalone plots here. 
+    # These are now generated as part of the unified diagnostic panels in src.models.train
+    # via plot_model_diagnostics and plot_confidence_abstention_panel.
     
     return metrics, results_df

@@ -58,6 +58,29 @@ We are building an "Engineering Grade" pipeline with strict quality controls (SQ
 
 ## 4. Recent Debugging & Outstanding Issues (Jan 2026)
 
+## 2026-01-18: Pipeline Harmonization, Label Remapping, and Safety Audit
+
+**Objectives:**
+- Ensure the deep learning pipeline matches the notebook logic for binary stress classification (Baseline vs Stress).
+- Fix persistent confusion matrix annotation issues by harmonizing label remapping ([1,2] → [0,1]) in both pipeline and notebook.
+- Guarantee all diagnostic plots and metrics are reproducible and correct.
+
+**Actions Taken:**
+1. Verified that the pipeline and notebook both filter for binary classification and remap labels consistently.
+2. Updated `src/models/train.py` to explicitly remap labels from [1,2] to [0,1] for binary classification, matching notebook logic.
+3. Validated that all diagnostic plots (especially confusion matrices) now show correct annotations in all cells.
+4. Performed a full codebase scan to ensure no downstream code expects the original labels ([1,2]) and that all modules (data, features, API, evaluation, visualization) are compatible with the remapped indices.
+5. Confirmed that multiclass scenarios are handled generically and that the pipeline is robust to future class additions.
+
+**Results:**
+- Confusion matrix annotation bug resolved; all cells are now correctly labeled and annotated.
+- No safety issues found: all downstream code uses remapped indices or class names, so the change is safe and robust.
+- Pipeline and notebook are now fully harmonized for binary stress classification.
+
+**Next Steps:**
+- Continue to monitor for edge cases if new classes are added.
+- Maintain strict notebook/pipeline alignment for reproducibility and portfolio quality.
+
 
     - **EDA SCR Detection Improvements (Jan 2026):**
         - Switched EDA SCR peak detection from a fixed height threshold to a prominence-based approach (`scipy.signal.find_peaks` with `prominence`).
@@ -256,6 +279,18 @@ otebooks/04_deep_learning_verification.ipynb)**:
     - The model is now fully optimized for the WESAD dataset (CHEST), with both high accuracy and reliability.
     - Further performance gains are likely to be marginal and may risk overfitting or reduce generalizability.
     - The pipeline is ready for deployment, monitoring, and documentation.
+
+## 5. Visualization Consistency Fixes (Jan 18, 2026)
+- [x] **Confusion Matrix Annotation Bug**:
+    - **Issue**: Pipeline-generated confusion matrices appeared to be missing annotations for the "Stress" class (bottom row).
+    - **Root Cause**: Two-fold issue:
+        1. `confusion_matrix` omitted rows/cols for missing classes (Fixed by `labels=[0, 1]`).
+        2. **Contrast Issue**: Text color was defaulting to Black on Dark Purple backgrounds in the non-interactive backend, making annotations invisible.
+    - **Fix**: Replaced seaborn's internal annotation with a custom `_add_heatmap_annotations` function in `src/visualization/plots.py`. It explicitly forces White text for any cell with intensity > 30%, ensuring visibility in all environments.
+- [x] **Column Naming Standardization**:
+
+    - Confirmed that `src/models/train.py` handles column renaming (`y_true` -> `true`, `prob_stress` -> `prob`) before passing data to plotting functions, ensuring compatibility with `src/visualization/plots.py`.
+
 
 
 

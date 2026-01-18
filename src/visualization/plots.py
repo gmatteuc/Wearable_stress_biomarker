@@ -100,6 +100,66 @@ def set_plot_style():
     
     return selected_colors
 
+def _improve_heatmap_annotations(ax, cmap_bg='purple', threshold=0.3):
+    """
+    Deprecated: Use _add_heatmap_annotations instead for robust manual placement.
+    """
+    pass
+
+def _add_heatmap_annotations(ax, data, fmt='d', threshold=0.3):
+    """
+    Manually adds text to heatmap cells. 
+    Bypasses seaborn's annot=True which can be flaky (skipping rows).
+    
+    Args:
+        ax: Matplotlib axes.
+        data: The numerical matrix used for coloring.
+        fmt: Format string ('d', '.2f') OR an numpy array/list of strings for custom labels.
+        threshold: Intensity threshold (0-1) to switch to white text.
+    """
+    rows, cols = data.shape
+    max_val = np.max(data) if np.max(data) > 0 else 1
+    
+    # Check if fmt is actually an annotation array (custom strings)
+    annot_array = None
+    if isinstance(fmt, (np.ndarray, list)):
+        annot_array = fmt
+        fmt = '' # disable formatting
+        
+    for i in range(rows):
+        for j in range(cols):
+            val = data[i, j]
+            
+            # Determine Color
+            # If data is essentially max-normalized (like recall), intensity ~ val
+            # Otherwise (counts), intensity ~ val/max
+            if max_val <= 1.05 and np.issubdtype(data.dtype, np.floating):
+                intensity = val
+            else:
+                intensity = val / max_val
+            
+            # Force White on dark background (> threshold)
+            color = 'white' if intensity > threshold else 'black'
+            
+            # Determine Text
+            if annot_array is not None:
+                text = str(annot_array[i][j])
+            else:
+                if fmt == 'd':
+                    text = f"{int(val)}"
+                elif fmt:
+                    try:
+                        text = format(val, fmt)
+                    except:
+                        text = str(val)
+                else:
+                    text = str(val)
+            
+            # Manually place text at center of cell
+            ax.text(j + 0.5, i + 0.5, text,
+                   ha='center', va='center',
+                   color=color, fontweight='bold', fontsize=14)
+
 def plot_confidence_abstention_panel(results_df, confidence_threshold=0.7, title_prefix="", save_folder: str = None):
     """
     Plots a 2x2 panel:
@@ -119,6 +179,7 @@ def plot_confidence_abstention_panel(results_df, confidence_threshold=0.7, title
 
     DEEP_PURPLE = "#4B0082"
     DARK_ORANGE = "#FF8C00"
+    # Revert to LinearSegmentedColormap for better contrast control
     cmap_purple = LinearSegmentedColormap.from_list("custom_purple", ["#fafafa", DEEP_PURPLE])
 
     # Calculate confidence
@@ -134,9 +195,16 @@ def plot_confidence_abstention_panel(results_df, confidence_threshold=0.7, title
     fig, axes = plt.subplots(2, 2, figsize=(16, 12))
 
     # (1) High-confidence Confusion Matrix
-    cm_clean = confusion_matrix(df_clean['true'], df_clean['pred'])
-    acc_clean = (df_clean['true'] == df_clean['pred']).mean()
-    sns.heatmap(cm_clean, annot=True, fmt='d', cmap=cmap_purple, ax=axes[0,0], annot_kws={"size": 14, "weight": "bold"})
+    # Always show both classes (0, 1) for binary stress classification
+    cm_clean = confusion_matrix(df_clean['true'], df_clean['pred'], labels=[0, 1])
+    acc_clean = (df_clean['true'] == df_clean['pred']).mean() if len(df_clean) > 0 else 0
+    
+    # Disable internal annot, use manual robust function
+    sns.heatmap(cm_clean, annot=False, cmap=cmap_purple, ax=axes[0,0], cbar=True,
+                xticklabels=['Baseline', 'Stress'],
+                yticklabels=['Baseline', 'Stress'])
+    _add_heatmap_annotations(axes[0,0], cm_clean, fmt='d', threshold=0.3)
+    
     axes[0,0].set_title(f'{title_prefix}High Confidence CM - Acc: {acc_clean:.1%}\n(Removed {n_abs} uncertain samples)')
     axes[0,0].set_xlabel('Predicted')
     axes[0,0].set_ylabel('True')
@@ -1197,7 +1265,7 @@ def _plot_styled_violin(ax, data, y, color):
         fliersize=0
     )
 
-def plot_model_diagnostics(results_df: pd.DataFrame, save_folder: str = None):
+def plot_model_diagnostics(results_df: pd.DataFrame, save_folder: str = None, title_prefix: str = ""):
     """
     Generates a 2x2 diagnostic panel for model verification (LOSO).
     
@@ -1211,6 +1279,7 @@ def plot_model_diagnostics(results_df: pd.DataFrame, save_folder: str = None):
     # Color Constants
     DEEP_PURPLE = "#4B0082"
     DARK_ORANGE = "#FF8C00"
+    # Revert to LinearSegmentedColormap for better contrast control
     cmap_purple = LinearSegmentedColormap.from_list("custom_purple", ["#fafafa", DEEP_PURPLE])
     
     # Setup Figure
@@ -1218,11 +1287,15 @@ def plot_model_diagnostics(results_df: pd.DataFrame, save_folder: str = None):
     
     # --- 1. Global Confusion Matrix (Top-Left) ---
     ax_cm = axes[0, 0]
-    cm = confusion_matrix(results_df['true'], results_df['pred'])
+    # Always show both classes (0, 1) for binary stress classification
+    cm = confusion_matrix(results_df['true'], results_df['pred'], labels=[0, 1])
     acc_pooled = accuracy_score(results_df['true'], results_df['pred'])
-    sns.heatmap(cm, annot=True, fmt='d', cmap=cmap_purple, ax=ax_cm, cbar=False,
-                xticklabels=['Baseline', 'Stress'], yticklabels=['Baseline', 'Stress'],
-                annot_kws={"size": 14, "weight": "bold"})
+    
+    # Disable annot=True, use manual
+    sns.heatmap(cm, annot=False, cmap=cmap_purple, ax=ax_cm, cbar=False,
+                xticklabels=['Baseline', 'Stress'], yticklabels=['Baseline', 'Stress'])
+    _add_heatmap_annotations(ax_cm, cm, fmt='d', threshold=0.3)
+    
     ax_cm.set_title(f'Global CM (Pooled) - Acc: {acc_pooled:.1%}', fontsize=16)
     ax_cm.set_ylabel('True Label', fontsize=12)
     ax_cm.set_xlabel('Predicted Label', fontsize=12)
@@ -1283,9 +1356,11 @@ def plot_model_diagnostics(results_df: pd.DataFrame, save_folder: str = None):
         for j in range(2):
             annot[i, j] = f"{mean_cm[i, j]:.2f}\n±{se_cm[i, j]:.2f}"
             
-    sns.heatmap(mean_cm, annot=annot, fmt='', cmap=cmap_purple, ax=ax_mcm, cbar=True,
-                xticklabels=['Baseline', 'Stress'], yticklabels=['Baseline', 'Stress'],
-                annot_kws={"size": 13, "weight": "bold"})
+    sns.heatmap(mean_cm, annot=False, cmap=cmap_purple, ax=ax_mcm, cbar=True,
+                xticklabels=['Baseline', 'Stress'], yticklabels=['Baseline', 'Stress'])
+    # Pass the formatted 'annot' array to the manual function
+    _add_heatmap_annotations(ax_mcm, mean_cm, fmt=annot, threshold=0.3)
+    
     ax_mcm.set_title(f'Mean Subject CM (Subject-Normalized) - Avg Acc: {mean_subject_acc:.1%}', fontsize=16)
     ax_mcm.set_ylabel('True Label', fontsize=12)
     ax_mcm.set_xlabel('Predicted Label', fontsize=12)
@@ -1338,7 +1413,8 @@ def plot_model_diagnostics(results_df: pd.DataFrame, save_folder: str = None):
     ax_acc.grid(axis='y', alpha=0.3)
     ax_acc.grid(axis='y', alpha=0.3)
     
-    _save_plot(fig, "Model_Diagnostics_Panel", save_folder)
+    save_name = f"{title_prefix}Model_Diagnostics_Panel" if title_prefix else "Model_Diagnostics_Panel"
+    _save_plot(fig, save_name, save_folder)
     return fig
 
 def plot_timeline_segmentation(df: pd.DataFrame, title: str = "Timeline Segmentation", save_folder: str = None):
@@ -1482,13 +1558,14 @@ def plot_multiscale_heatmap(
     _save_plot(fig, title_prefix + "_Heatmap", save_folder)
     return fig
 
-def plot_learning_curves(history: dict, save_folder: str = None):
+def plot_learning_curves(history: dict, save_folder: str = None, title_prefix: str = ""):
     """
     Plots Training and Validation Loss/Accuracy curves aggregated across LOSO folds.
     
     Args:
         history (dict): Dictionary where keys are 'Fold_X' and values are dicts with 'train_loss', 'val_loss', 'val_acc'.
         save_folder (str): Folder to save output.
+        title_prefix (str): Prefix for the saved filename.
     """
     if not history:
         print("No training history available to plot.")
@@ -1586,7 +1663,8 @@ def plot_learning_curves(history: dict, save_folder: str = None):
     plt.tight_layout()
     
     if save_folder:
-        _save_plot(fig, "learning_curves", save_folder)
+        save_name = f"{title_prefix}learning_curves" if title_prefix else "learning_curves"
+        _save_plot(fig, save_name, save_folder)
         
     return fig
 

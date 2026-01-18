@@ -32,6 +32,8 @@ from src.features.feature_extraction import FeatureExtractor
 from src.models.deep import ResNet1D
 from src.models.evaluate import evaluate_model
 from src.utils.logger import get_logger
+from src.visualization.plots import plot_learning_curves, plot_model_diagnostics, plot_confidence_abstention_panel
+from datetime import datetime
 
 logger = get_logger(__name__)
 
@@ -41,8 +43,16 @@ class Trainer:
         self.model_type = model_type
         self.split_type = split_type
         self.processed_path = PROJECT_ROOT / self.config['data']['processed_path']
-        self.run_dir = PROJECT_ROOT / "reports" / f"{model_type}_{split_type}"
+        
+        # Get modality from config for folder naming
+        sensor_loc = self.config['data'].get('sensor_location', 'unknown').upper()
+        
+        # Timestamped run directory with modality
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        self.run_dir = PROJECT_ROOT / "reports" / f"{model_type}_{split_type}_{sensor_loc}_{timestamp}"
         self.run_dir.mkdir(parents=True, exist_ok=True)
+        
+        logger.info(f"Initialized Trainer. Run directory: {self.run_dir}")
         
         # Save run config
         with open(self.run_dir / "config_snapshot.yaml", "w") as f:
@@ -123,12 +133,15 @@ class Trainer:
         X, y, groups, feature_names = self.load_data()
 
         # Remap labels to 0..K-1 for sklearn compatibility (argmax matches index)
+        # For binary classification, ensure mapping [1,2] -> [0,1] (Baseline=0, Stress=1)
         unique_labels = sorted(np.unique(y))
-        label_map = {l: i for i, l in enumerate(unique_labels)}
+        if unique_labels == [1, 2]:
+            label_map = {1: 0, 2: 1}
+            labels = [self.config['data']['labels'][1], self.config['data']['labels'][2]]
+        else:
+            label_map = {l: i for i, l in enumerate(unique_labels)}
+            labels = [self.config['data']['labels'][i] for i in unique_labels]
         y_mapped = np.array([label_map[l] for l in y])
-        
-        # Display mappings
-        labels = [self.config['data']['labels'][i] for i in sorted(np.unique(y))]
 
         if self.split_type == 'loso':
             logger.info("Running full Leave-One-Subject-Out Cross-Validation...")
@@ -201,6 +214,71 @@ class Trainer:
         
         joblib.dump(feature_names, self.run_dir / "feature_names.joblib")
         evaluate_model(y_test_final, y_prob_final, labels, self.run_dir, subject_ids=groups_test_final)
+
+        # Generate Visualizations (Diagnostics & Uncertainty)
+        logger.info("Generating visualization reports...")
+        
+        # Load the results dataframe just created by evaluate_model
+        results_df = pd.read_csv(self.run_dir / "predictions.csv")
+        
+        # Rename columns to match plot expectations if needed (though evaluate_model saves them correctly)
+        # evaluate_model saves: y_true, y_pred, confidence, prob_baseline, prob_stress, subject_id
+        # plots expect: 'true', 'pred', 'prob' (max prob or specific class prob)
+        
+        # Mapping for plots
+        if 'y_true' in results_df.columns:
+            results_df = results_df.rename(columns={'y_true': 'true', 'y_pred': 'pred'})
+        
+        # Ensure 'prob' column exists (usually prob of positive class 'Stress')
+        # Check label names. labels variable has ['Baseline', 'Stress'] usually.
+        stress_label = self.config['data']['labels'][2] # 'Stress'
+        if f'prob_{stress_label}' in results_df.columns:
+            results_df['prob'] = results_df[f'prob_{stress_label}']
+        elif 'confidence' in results_df.columns:
+            # Fallback if specific class prob not easily found (though evaluate_model saves all)
+             pass 
+
+        # 1. Model Diagnostics
+        prefix = f"{self.model_type}_{self.split_type}_"
+        # We pass save_folder as absolute path (self.run_dir) by converting to string, 
+        # BUT plot functions might append to 'outputs/'. 
+        # Let's check _save_plot logic. It prepends 'outputs' if save_folder is relative.
+        # If we want to save DIRECTLY into run_dir, we might need to handle it or use a trick.
+        # However, typically MLOps separates raw artifacts (reports/) from plots (notebooks/outputs/).
+        # The user asked to produce in the REPORT folder.
+        
+        # Update: _save_plot implementation:
+        # if cwd/notebooks exists -> base_dir = cwd/notebooks/outputs
+        # target_dir = base_dir / save_folder
+        
+        # WE WANT TO SAVE IN self.run_dir.
+        # The plotting functions (plot_model_diagnostics) take save_folder.
+        # We can temporarily hack it or better, just save manually using the returned figure.
+        
+        try:
+            import matplotlib.pyplot as plt
+            
+            # Diagnostics
+            fig_diag = plot_model_diagnostics(results_df, save_folder=None, title_prefix=prefix)
+            fig_diag.savefig(self.run_dir / "model_diagnostics.png", dpi=300, bbox_inches='tight')
+            plt.close(fig_diag)
+            
+            # Confidence Abstention
+            # Use threshold from config if available
+            conf_threshold = self.config['training'].get('confidence_threshold', 0.7)
+            # If strictly defined in deep section, fallback.
+            if not conf_threshold:
+                 conf_threshold = 0.7
+                 
+            fig_unc = plot_confidence_abstention_panel(results_df, confidence_threshold=conf_threshold, title_prefix=prefix, save_folder=None)
+            fig_unc.savefig(self.run_dir / "confidence_analysis.png", dpi=300, bbox_inches='tight')
+            plt.close(fig_unc)
+            
+            logger.info("Visualizations saved to reports directory.")
+            
+        except Exception as e:
+            logger.error(f"Failed to generate plots: {e}")
+
         logger.info(f"Results saved to {self.run_dir}")
 
     def train_deep(self):
@@ -214,9 +292,13 @@ class Trainer:
         
         # Remap labels to 0..K-1
         unique_labels = sorted(np.unique(y))
-        label_map = {l: i for i, l in enumerate(unique_labels)}
+        if unique_labels == [1, 2]:
+            label_map = {1: 0, 2: 1}
+            display_labels = [self.config['data']['labels'][1], self.config['data']['labels'][2]]
+        else:
+            label_map = {l: i for i, l in enumerate(unique_labels)}
+            display_labels = [self.config['data']['labels'][l] for l in unique_labels]
         y_mapped = np.array([label_map[l] for l in y])
-        display_labels = [self.config['data']['labels'][l] for l in unique_labels]
         
         if self.split_type == 'loso':
             logger.info("Running Deep Learning LOSO Cross-Validation...")
@@ -356,12 +438,43 @@ class Trainer:
             y_prob_final = np.concatenate(y_prob_all)
             groups_test_final = np.concatenate(groups_test_all)
             
-            # Save History
             joblib.dump(history_all, self.run_dir / "training_history.joblib")
             
             # Evaluate Aggregate Performance
-            evaluate_model(y_test_final, y_prob_final, display_labels, self.run_dir, subject_ids=groups_test_final)
+            metrics, results_df = evaluate_model(y_test_final, y_prob_final, display_labels, self.run_dir, subject_ids=groups_test_final)
             
+            # --- Generate & Save Plots (Harmonized with Notebook) ---
+            logger.info("Generating diagnostic plots...")
+            
+            # 1. Learning Curves
+            fig_fc = plot_learning_curves(history_all, save_folder=None)
+            fig_fc.savefig(self.run_dir / "learning_curves.png", bbox_inches='tight', dpi=300)
+            
+            # Prepare DF for plots (column renaming)
+            # evaluate_model outputs: 'y_true', 'y_pred', 'confidence', 'prob_{label}'
+            # plot functions expect: 'true', 'pred', 'prob' (for main class of interest)
+            plot_df = results_df.copy()
+            rename_map = {'y_true': 'true', 'y_pred': 'pred'}
+            
+            # Identify probability column for the "Stress" class (usually index 1)
+            # We look for prob_Stress or prob_stress
+            stress_col = [c for c in plot_df.columns if 'stress' in c.lower() and 'prob' in c]
+            if stress_col:
+                rename_map[stress_col[0]] = 'prob'
+            
+            plot_df = plot_df.rename(columns=rename_map)
+            
+            # 2. Model Diagnostics
+            if 'prob' in plot_df.columns:
+                 fig_diag = plot_model_diagnostics(plot_df, save_folder=None)
+                 fig_diag.savefig(self.run_dir / "model_diagnostics.png", bbox_inches='tight', dpi=300)
+                 
+                 # 3. Confidence & Abstention
+                 fig_conf = plot_confidence_abstention_panel(plot_df, confidence_threshold=0.7, title_prefix="Deep LOSO ", save_folder=None)
+                 fig_conf.savefig(self.run_dir / "confidence_abstention.png", bbox_inches='tight', dpi=300)
+            else:
+                logger.warning("Could not identify 'prob' column for Stress. Skipping diagnostic plots.")
+
             # Final Training on ALL Data
             logger.info("Training final deep model on full dataset...")
             means = X.mean(axis=(0, 2), keepdims=True)
