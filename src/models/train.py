@@ -16,6 +16,14 @@ import joblib
 import json
 from pathlib import Path
 from sklearn.model_selection import GroupKFold, train_test_split
+from sklearn.pipeline import Pipeline
+from sklearn.preprocessing import StandardScaler
+from sklearn.linear_model import LogisticRegression
+import torch
+import torch.nn as nn
+import torch.optim as optim
+from torch.utils.data import TensorDataset, DataLoader
+from src.config import load_config, PROJECT_ROOT
 from src.features.feature_extraction import FeatureExtractor
 from src.models.deep import ResNet1D
 from src.models.evaluate import evaluate_model

@@ -1,129 +1,115 @@
-# Wearable Stress Detection with Quality-Aware MLOps
+# Wearable Stress Biomarker & MLOps Pipeline
 
-## Project Status
-**Active Development** - Phase: MLOps & Deployment (CHEST Modality)
+<img src="misc/dataset-cover.png" width="800">
 
-## Key Features
-- **Deep Learning**: ResNet-1D architecture optimized for physiological time-series (CHEST modality).
-- **Explainability**: Instance Normalization visualization to audit model inputs.
-- **REST API**: FastAPI implementation for real-time stress prediction (`src/api/app.py`).
-- **MLOps**: Automated Data Drift detection (Covariate Shift) to monitor population shifts (`src/monitoring/drift_report.py`).
-- **Reproducibility**: End-to-end consistency between Training and Inference logic.
+## Project Overview
+This project implements an end-to-end "Engineering Grade" Machine Learning pipeline to detect physiological stress from multi-modal wearable sensor data. Typically, physiological signal processing is confined to research notebooks; here, I demonstrate how to bridge the gap between biomedical research and production-ready MLOps.
 
-## Overview
-This project demonstrates a production-grade Machine Learning Engineering pipeline for detecting stress using multi-sensor wearable data (WESAD dataset). 
+The system processes raw biosignals (ECG, EDA, Respiration, Temperature, Accelerometry) to classify the user's state as **Baseline** or **Stress** in real-time.
 
-**Key Goals:**
-1. **Realistic Domain Shift:** Evaluation using **Leave-One-Subject-Out (LOSO)** validation to ensure the model generalizes to new people.
-2. **Reliability:** Implementation of **Signal Quality Indices (SQI)** to filter noisy data and **Calibration** to provide trustworthy probability estimates.
-3. **MLOps Engineering:** Reproducible pipeline, experiment tracking, drift monitoring, and a deployment-ready FastAPI endpoint packaged with Docker.
+**Use Case Scenario:**
+*Consider an occupational safety system for high-stakes professions (e.g., pilots, first responders). The goal is to monitor physiological stress benchmarks in real-time, flagging cognitive overload before performance degrades or safety `is compromised. This requires not just high accuracy, but robust generalization to new users and explainable reliability metrics.*
+
+**Key Value Points:**
+1.  **Rigorous Validation**: Implements **Leave-One-Subject-Out (LOSO)** cross-validation to ensure the model generalizes to unseen individuals (preventing the "identity leakage" common in amateur biomedical AI).
+2.  **Deep Learning Architecture**: A custom **ResNet-1D** with Squeeze-and-Excitation blocks to learn morphological features directly from raw time-series, outperforming traditional feature engineering.
+3.  **Full MLOps Lifecycle**: Includes data versioning, Signal Quality Indices (SQI), Model Drift detection, and a FastAPI deployment endpoint.
+
+Created by [Your Name] in 2026.
+
+> **Development Note**: The current pipeline is fully validated and tested on the **CHEST** sensor modality (High-fidelity ECG, Chest EDA). The infrastructure currently supports the **WRIST** modality (PPG/BVP), but specific validation benchmarks and hyperparameter tuning for wrist-based signals are currently in development.
 
 ## Dataset
-We use the **WESAD (Wearable Stress and Affect Detection)** dataset. 
-- **Modalities Used:** Chest-worn ACC, ECG, EDA, EMP, RESP, TEMP.
-- **Classes:** Baseline (Neutral), Stress, Amusement.
-- **Preprocessing:** 
-  - Validated and unzipped automatically.
-  - Resampled to 35 Hz.
-  - Segmented him into 60s windows with 50% overlap.
+The project utilizes the **WESAD (Wearable Stress and Affect Detection)** dataset.
+- **Subjects**: 15 participants in a controlled lab study.
+- **Signals**: 
+  - **Chest**: ECG (700Hz), EDA, EMG, Respiration, Temperature, Accelerometer.
+  - **Wrist**: BVP (64Hz), EDA, Skin Temperature.
+- **Context**: Three affective states: Neutral (Baseline), Stress (TSST protocol), Amusement.
 
-## Project Structure
+## Methodology
+
+### 1. Preprocessing & Signal Quality
+Raw sensor streams are messy. The pipeline implements:
+- **Resampling**: Harmonizing all signals to 35Hz for deep learning ingestion.
+- **Windowing**: Sliding vectors of 60 seconds with 50% overlap.
+- **Signal Visualization**: Automated generation of signal snapshots to verify integrity.
+
+<img src="misc/Subject_S2_-_Raw_Chest_Signals_60s_snapshot_example.png" width="600">
+*Example of a 60-second window of raw physiological signals from the Chest sensor.*
+
+### 2. Machine Learning Modeling
+Two modeling approaches were compared to establish a robust benchmark:
+- **Baseline (Classical ML)**: Logistic Regression on statistically engineered features (Mean, Std, Peaks, Dynamic Range).
+- **Deep Learning (ResNet-1D)**: A 1D Convolutional Neural Network that learns representations directly from the raw `(Channels x Time)` tensor.
+
+### 3. Evaluation Strategy
+We strictly adhere to a **Leave-One-Subject-Out (LOSO)** protocol. If we randomly split windows, the model would learn the subject's unique heart rate, not "stress". LOSO ensures we test on a person the model has never seen before.
+
+### 4. MLOps & Deployment
+- **FastAPI**: A robust REST API for real-time inference.
+- **Drift Monitoring**: Statistical tests (Kolmogorov-Smirnov) to detect when incoming data deviates from the training distribution (Covariate Shift).
+
+## Key Findings
+- **Performance**: The Deep Learning approach significantly outperforms the classical baseline (Acc **~96%** vs **~86%**).
+- **Why?**: The CNN captures complex local morphologies (e.g., the specific slope of an EDA reaction or R-peak interval variability) that global statistical aggregations miss.
+- **Reliability**: We analyze prediction confidence histograms to identify "ambiguous" zones where the model should abstain from predicting.
+
+<img src="misc/deep_Confidence_Abstention_example.png" width="800">
+*Reliability Audit: Analyzing model confidence and calibration to prevent silent failures.*
+
+## 💻 Project Structure
 ```
-.
-├── configs/            # Configuration (YAML)
-├── data/               # Raw and processed data
-├── src/                # Source code
-│   ├── api/            # FastAPI deployment
-│   ├── data/           # ETL pipeline
-│   ├── features/       # SQI and Feature Engineering
-│   ├── models/         # Training and Deep Learning modules
-│   └── monitoring/     # Drift detection
+├── configs/            # YAML configuration for experiments
+├── data/               # Data management (Raw vs Processed)
+├── notebooks/          # Verification & Demo Notebooks
+│   ├── 01_preprocessing.ipynb
+│   ├── 04_deep_learning_verification.ipynb
+│   └── 05_inference_demo.ipynb
+├── reports/            # Training artifacts (Models, Logs, Plots)
+├── src/
+│   ├── api/            # FastAPI application
+│   ├── data/           # ETL & Validation logic
+│   ├── features/       # SQI & Feature Extraction
+│   ├── models/         # PyTorch (ResNet) & Scikit-Learn logic
+│   └── monitoring/     # Drift detection modules
 ├── tests/              # Unit tests
-├── Makefile            # Command shortcuts
+├── Dockerfile          # Container definition
+├── Makefile            # Automation
 └── README.md           # Documentation
 ```
 
-## Setup
+## ⚙️ Installation & Usage
 
-1. **Environment:**
+1. **Environment Setup**:
+   The project uses `conda` and `pip` via a Makefile for reproducible setup.
    ```bash
    make setup
    ```
 
-2. **Data:**
-   Place `WESAD.zip` in `data/` (if not already present).
+2. **Data Pipeline**:
+   Download and process the raw WESAD data (assumes WESAD.zip is in `data/raw`).
    ```bash
-   make download    # Validates and unzips
-   make preprocess  # Parsing, Resampling, Windowing (to parquet)
+   make preprocess 
    ```
 
-3. **Feature Engineering:**
+3. **Train Models**:
+   Execute the full training pipeline (Baseline + Deep):
    ```bash
-   make features    # Extracts statistical features for classical models
+   make train-baseline
+   make train-deep
    ```
 
-## Usage
+4. **Run API**:
+   Launch the inference server locally.
+   ```bash
+   make run-api
+   ```
+   Access the Swagger UI at `http://localhost:8000/docs`.
 
-### Training
-Train the classical baseline (Logistic Regression) with LOSO split:
-```bash
-make train-baseline
-```
-Train the Deep 1D-CNN model:
-```bash
-make train-deep
-```
-Artifacts (models, metrics, plots) are saved in `reports/`.
-
-### Deployment
-Run the API locally:
-```bash
-make run-api
-```
-Test the endpoint (Swagger UI at http://localhost:8000/docs):
-```json
-POST /predict_window
-{
-  "EDA": [0.5, 0.51, ...],
-  "ACC_x": [0.01, 0.02, ...], 
-  ...
-}
-```
-
-### Docker
-```bash
-docker build -t outcomes/stress-detection .
-docker run -p 8000:8000 outcomes/stress-detection
-```
-
-### Monitoring
-Check for data drift between training reference and new batch:
-```bash
-# Example python script usage (if applicable) or refer to Notebook 05
-python -m src.monitoring.drift_report --ref data/processed/train.parquet --curr data/processed/batch_01.parquet
-```
-See `notebooks/05_inference_demo.ipynb` for the interactive Drift Dashboard.
-```bash
-python -m src.monitoring.drift_report --reference data/processed/features.parquet --current data/new_batch.parquet
-```
-
-## Methodological Details
-
-### Signal Quality (SQI)
-We implement a rule-based SQI layer (`src.features.sqi`) that checks for:
-- Signal completeness
-- Flatline artifacts (sensor disconnect)
-- High-intensity motion (via Accelerometer)
-
-If SQI is below threshold, the API returns an `abstain` flag to prevent unreliable predictions.
-
-### Calibration
-Models are wrapped in `CalibratedClassifierCV` (Platt Scaling) to ensuring that a predicted probability of 0.7 truly corresponds to a 70% chance of stress. We evaluate this using ECE (Expected Calibration Error).
-
-### Evaluation
-We strictly enforce subject-disjoint splits. Standard random splits overestimate performance in wearable biometrics due to individual physiological uniqueness.
-
-## Next Steps
-- Implement HR/HRV feature extraction from ECG/BVP.
-- Add MC Dropout quantification of epistemic uncertainty for the Deep model.
-- Integrate MLflow for experiment tracking server.
+## Dependencies
+- **Core**: `pandas`, `numpy`, `scipy`
+- **Deep Learning**: `torch`, `torchvision` (1D ResNet adaptation)
+- **ML**: `scikit-learn`, `joblib`
+- **Deployment**: `fastapi`, `uvicorn`, `docker`
+- **Visualization**: `matplotlib`, `seaborn`
