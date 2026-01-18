@@ -7,7 +7,7 @@ name = "wearable_stress_biomarker"
 version = "0.1.0"
 description = "A production-grade portfolio project for wearable stress detection using WESAD."
 authors = [
-    {name = "Your Name", email = "your.email@example.com"},
+    {name = "Giulio Matteucci", email = "giulio.matteucci@example.com"},
 ]
 dependencies = [
     "numpy>=1.21.0",
