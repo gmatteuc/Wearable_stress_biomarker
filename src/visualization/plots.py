@@ -1668,3 +1668,111 @@ def plot_learning_curves(history: dict, save_folder: str = None, title_prefix: s
         
     return fig
 
+def visualize_inference(window_row: pd.Series, predictor, save_folder: str = None):
+    """
+    1. Prepares data for inference (extracts channels).
+    2. Runs predictions via StressPredictor.
+    3. Plots Instance-Normalized Heatmap + Prediction Info using the standard purple-orange palette.
+    
+    Args:
+        window_row (pd.Series): Row containing signal channels (ACC_x, etc.) and labels.
+        predictor (StressPredictor): Initialized inference wrapper.
+        save_folder (str, optional): Folder name to save the figure (under notebooks/outputs/).
+        
+    Returns:
+        matplotlib.figure.Figure: The generated plot.
+    """
+    
+    # --- 1. Data Prep ---
+    channels = ['ACC_x', 'ACC_y', 'ACC_z', 'ECG', 'EDA', 'RESP', 'TEMP']
+    
+    # Extract Time-Series structure
+    ts_data = {}
+    for c in channels:
+        if c in window_row:
+             ts_data[c] = window_row[c]
+        else:
+             # Basic handling for missing channels in visualization (fill 0)
+             # Ideally this shouldn't happen if validation was passed
+             ts_data[c] = np.zeros(2100) # Assumes 35Hz * 60s
+        
+    # Create Time x Channels DataFrame (60s input)
+    input_df = pd.DataFrame(ts_data)
+    
+    # Inference
+    result = predictor.predict(input_df)
+    
+    # --- 2. Visualization Prep (Instance Norm for Plotting) ---
+    # We replicate the model's view: Instance Normalization
+    X_viz = input_df.values.T # (C, T)
+    mean = X_viz.mean(axis=1, keepdims=True)
+    std = X_viz.std(axis=1, keepdims=True) + 1e-6
+    X_norm = (X_viz - mean) / std
+    
+    # --- 3. Plotting ---
+    fig, ax = plt.subplots(figsize=(15, 5))
+    
+    # Define Colormap (Deep Purple -> White -> Dark Orange) matching project style
+    colors = ["#4B0082", "white", "#FF8C00"]
+    cmap = LinearSegmentedColormap.from_list("custom_purple_orange", colors)
+    
+    sns.heatmap(
+        X_norm, 
+        cmap=cmap, 
+        center=0, 
+        robust=True, # Robust quantile based contrast
+        cbar_kws={"label": "Z-Score (Instance Norm)"},
+        yticklabels=channels,
+        xticklabels=350, # Mark every 10s (35Hz) for cleaner axis
+        ax=ax
+    )
+    
+    # Format X-axis
+    ax.set_xlabel("Time Samples (60s @ 35Hz)")
+    
+    # Annotations
+    # Handle label mapping if 'label_str' exists, else map integer
+    true_label = "Unknown"
+    if 'label_str' in window_row:
+        true_label = window_row['label_str']
+    else:
+        # Try numeric
+        l = window_row.get('label')
+        if l is not None:
+             label_map = {1: 'Baseline', 2: 'Stress'}
+             true_label = label_map.get(l, str(l))
+
+    pred_label = result['prediction']
+    conf = result['confidence']
+    status = result['status']
+    
+    # Color code title based on correctness
+    # Deep Purple for Correct, Dark Red for Error, Gray for Abstain
+    if status == 'Abstained':
+        title_color = 'gray'
+        res_text = f"ABSTAINED (Conf: {conf:.1%})"
+    elif pred_label == true_label:
+        title_color = '#4B0082' # Deep Purple
+        res_text = f"CORRECT: {pred_label} (Conf: {conf:.1%})"
+    else:
+        title_color = 'darkred' 
+        res_text = f"INCORRECT: Pred {pred_label} vs True {true_label} (Conf: {conf:.1%})"
+
+    ax.set_title(f"Inference Audit | Ground Truth: {true_label} | Result: {res_text}", 
+                 color=title_color, fontsize=14, fontweight='bold', pad=15)
+    
+# Add props text box removal logic
+    # The text box was deemed clutter. If we need stats, we should print them in the notebook
+    # or add them to the title concisely.
+    # For now, we simply remove the ax.text block.
+    
+    # We also remove the stats_lines construction since it is no longer used, unless we return it.
+    
+    plt.tight_layout()
+    
+    if save_folder:
+        # Sanitize filename for _save_plot
+        fname = f"inference_audit_True_{true_label}_Pred_{pred_label}_{conf:.2f}"
+        _save_plot(fig, fname, save_folder)
+    
+    return fig

@@ -477,8 +477,11 @@ class Trainer:
 
             # Final Training on ALL Data
             logger.info("Training final deep model on full dataset...")
-            means = X.mean(axis=(0, 2), keepdims=True)
-            stds = X.std(axis=(0, 2), keepdims=True) + 1e-6
+            
+            # Use Instance Normalization (Per-window) to match CV and Inference logic
+            # (N, C, T) -> Mean/Std over Time axis (2) only.
+            means = X.mean(axis=2, keepdims=True)
+            stds = X.std(axis=2, keepdims=True) + 1e-6
             X_norm = (X - means) / stds
             
             full_ds = TensorDataset(torch.tensor(X_norm, dtype=torch.float32), torch.tensor(y_mapped, dtype=torch.long))
@@ -497,7 +500,9 @@ class Trainer:
                     optimizer.step()
             
             torch.save(final_model.state_dict(), self.run_dir / "model.pt")
-            joblib.dump({'mean': means, 'std': stds}, self.run_dir / "normalizer.joblib")
+            # We don't need to save global normalizer for Instance Norm, but keeping file doesn't hurt.
+            # However, for consistency, let's just save a marker or skip.
+            # joblib.dump({'mean': means, 'std': stds}, self.run_dir / "normalizer.joblib")
             
         else:
             # Single Split Logic (Random)
