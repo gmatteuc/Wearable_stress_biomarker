@@ -1,6 +1,6 @@
 # Wearable Stress Biomarker & MLOps Pipeline
 
-![CI](https://github.com/gmatteuc/Wearable_stress_biomarker/actions/workflows/ci.yaml/badge.svg)
+![CI/CD Pipeline](https://img.shields.io/github/actions/workflow/status/gmatteuc/Wearable_stress_biomarker/ci.yaml?branch=main&label=CI%2FCD%20Pipeline&color=000000)
 ![Python](https://img.shields.io/badge/python-3.9%2B-blue)
 ![Code Style](https://img.shields.io/badge/code%20style-ruff-000000.svg)
 
