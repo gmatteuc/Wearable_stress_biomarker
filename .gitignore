@@ -44,6 +44,8 @@ data/docs/*
 notebooks/outputs/*
 
 # Models and artifacts
-models/*
-reports/*
+reports/
 logs/
+
+# We want to track the production model in git (as long as <100MB)
+!models/prod/

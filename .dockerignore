@@ -13,7 +13,7 @@ venv/
 .env
 
 # Data (Don't rename/remove this! Data should be mounted, not copied in build generally, unless small)
-# For this specific "Deployment" demo, we might want to exclude raw data but keep processed? 
+# For this specific "Deployment" demo, we might want to exclude raw data but keep processed?
 # No, usually we don't bake data into the image.
 data/
 
@@ -28,3 +28,7 @@ notebooks/
 build/
 dist/
 *.egg-info/
+
+# Ignore all experimental reports, but keep the production model
+reports/
+!models/prod/

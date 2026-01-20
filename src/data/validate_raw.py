@@ -7,20 +7,19 @@ It checks for the presence of specific subject folders and handles the
 unzipping process if necessary.
 """
 
-import os
-import zipfile
-from pathlib import Path
 import logging
+import zipfile
 
-from src.config import load_config, PROJECT_ROOT
+from src.config import PROJECT_ROOT, load_config
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+
 def validate_and_unzip():
     config = load_config()
-    raw_path = PROJECT_ROOT / config['data']['raw_path']
-    zip_path = PROJECT_ROOT / config['data']['zip_path']
+    raw_path = PROJECT_ROOT / config["data"]["raw_path"]
+    zip_path = PROJECT_ROOT / config["data"]["zip_path"]
 
     # Ensure raw directory exists
     raw_path.mkdir(parents=True, exist_ok=True)
@@ -34,15 +33,17 @@ def validate_and_unzip():
         return
 
     logger.info(f"Missing subjects: {missing_subjects}")
-    
+
     if zip_path.exists():
         logger.info(f"Unzipping {zip_path}...")
-        with zipfile.ZipFile(zip_path, 'r') as zip_ref:
+        with zipfile.ZipFile(zip_path, "r") as zip_ref:
             zip_ref.extractall(raw_path)
         logger.info("Unzip complete.")
-        
+
         # Verify again
-        missing_subjects = [s for s in subjects if not (raw_path / "WESAD" / s).exists()]
+        missing_subjects = [
+            s for s in subjects if not (raw_path / "WESAD" / s).exists()
+        ]
         if not missing_subjects:
             logger.info("Data validation successful.")
         else:
@@ -50,6 +51,7 @@ def validate_and_unzip():
     else:
         logger.error(f"WESAD.zip not found at {zip_path} and raw data is incomplete.")
         raise FileNotFoundError(f"Please download WESAD.zip to {zip_path}")
+
 
 if __name__ == "__main__":
     validate_and_unzip()

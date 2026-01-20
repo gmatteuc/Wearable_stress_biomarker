@@ -2,18 +2,18 @@ data:
   raw_path: "data/raw"
   processed_path: "data/processed"
   zip_path: "data/WESAD.zip"
-  
+
   # Pipeline Configuration
   sensor_location: "chest"   # Options: "chest", "wrist"
-  
+
   # Modalities to process (will be filtered based on availability)
-  modalities: ["EDA", "ACC", "TEMP", "RESP", "BVP"] 
-  
+  modalities: ["EDA", "ACC", "TEMP", "RESP", "BVP"]
+
   sampling_rate: 700  # Base logic rate (labels are 700Hz)
   target_sampling_rate: 35 # Common frequency for ML input
   window_size_sec: 60
   window_overlap_sec: 30
-  labels: 
+  labels:
     0: "transient"
     1: "baseline"
     2: "stress"
@@ -29,9 +29,9 @@ features:
     acceptance_threshold: 0.7
     motion_threshold_g: 0.5
     flatline_thresholds:
-      EDA: 0.005 
-      TEMP: 0.01 
-      ECG: 0.05 
+      EDA: 0.005
+      TEMP: 0.01
+      ECG: 0.05
       RESP: 0.5
     valid_ranges:
       TEMP: [20.0, 45.0]
