@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "wearable_stress_biomarker"
 version = "0.1.0"
-description = "A production-grade portfolio project for wearable stress detection using WESAD."
+description = "Wearable Biomarker of Stress: End-to-end MLOps pipeline (WESAD) using ResNet-1D with LOSO validation, Uncertainty Estimation, and Drift Monitoring."
 authors = [
     {name = "Giulio Matteucci", email = "giulio.matteucci@example.com"},
 ]
