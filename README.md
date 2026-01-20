@@ -31,6 +31,24 @@ This project utilizes the **WESAD (Wearable Stress and Affect Detection)** datas
 ### Deep Learning Architecture
 We feed raw multi-channel signal tensors `(Batch, 7, 2100)` (ACC_x, ACC_y, ACC_z, ECG, EDA, RESP, TEMP) into a custom **ResNet-1D** with Squeeze-and-Excitation blocks. This validates that deep representation learning can outperform manual feature engineering (e.g., HRV stats) for this task.
 
+## Methodology: From Raw Signals to Deep Features
+
+Instead of manually calculating 100+ statistical features (mean, HRV, peak-counts), we feed the raw multi-channel signal tensor `(Batch, 7, 2100)` directly into a Deep Residual Network.
+
+<div align="center">
+  <img src="misc/Subject_S2_-_Raw_Chest_Signals_60s_snapshot_example.png" width="80%">
+  <p><em>Raw 60s Input Window (noisy, multi-modal).</em></p>
+  <br>
+  <img src="misc/Features_Heatmap_example.png" width="80%">
+  <p><em>Visualization of the Normalized Tensor Inputs (what the network sees).</em></p>
+</div>
+<br>
+
+- **Top:** Raw multi-channel signals (ECG, EDA, Resp, etc.) prior to normalization.
+- **Bottom:** The <b>Normalized Input Tensor</b> fed to the CNN. The top half shows Global Normalization (preserving signal magnitude), while the bottom half shows Instance Normalization (highlighting local shape morphology).
+
+---
+
 ## Engineering & MLOps Maturity
 This project goes beyond simple model training by implementing a comprehensive MLOps framework to ensure code quality, reproducibility, and deployment readiness.
 
