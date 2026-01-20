@@ -17,7 +17,7 @@ The system processes raw biosignals (ECG, EDA, Respiration, Temperature, Acceler
 **Key Engineering Value:**
 1.  **Rigorous Validation**: Implements **Leave-One-Subject-Out (LOSO)** cross-validation. This ensures the model generalizes to *unseen* individuals, preventing the "identity leakage" common in amateur biomedical AI.
 2.  **Deep Representation Learning**: A custom **ResNet-1D** with Squeeze-and-Excitation blocks learns morphological features directly from raw time-series, eliminating the need for brittle manual feature engineering.
-3.  **Full MLOps Lifecycle**: Includes **CI/CD automation**, data versioning, Signal Quality Indices (SQI), Model Drift detection, and a FastAPI deployment endpoint.
+3.  **Full MLOps Lifecycle**: Includes **CI/CD automation**, **Containerized Deployment**, data versioning, and Signal Quality Indices (SQI).
 
 Created by Giulio Matteucci in 2026.
 
